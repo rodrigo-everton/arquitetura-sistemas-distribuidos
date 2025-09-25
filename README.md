@@ -7,6 +7,9 @@ SERVIDOR - WORKER
 
 SERVIDOR - SERVIDOR
 | 1 | Servidor A → Servidor B | `{"SERVER": "ALIVE"}` | Enviar um sinal de vida (heartbeat). |
+| 1.1 | Servidor B → Servidor A | `{"SERVER": "ALIVE"}` | Enviar um sinal de vida (heartbeat). |
+
 | 2 | Servidor A → Servidor B | `{"TASK": "WORKER_REQUEST", "WORKERS_NEEDED": 5}` | Enviar um pedido de trabalhadores emprestado. |
-| 2 | Servidor A → Servidor B | `{"TASK": "WORKER_RESPONSE", "STATUS": "ACK NACK"}` | Enviar uma resposta de pedido de trabalhadores emprestado (ACK: Servidor não saturado, NACK: Servidor saturado). |
-| 2 | Servidor A → Servidor B | `{"TASK": "WORKER_RESPONSE", "STATUS": "ACK",  "WORKERS": {"WORKER_IP": }}` | Enviar uma resposta de pedido de trabalhadores emprestado (ACK: Servidor não saturado, NACK: Servidor saturado). |
+| 3 | Servidor A → Servidor B | `{"TASK": "WORKER_RESPONSE", "STATUS": "ACK | NACK"}` | Enviar uma resposta de pedido de trabalhadores emprestado (ACK: Servidor não saturado, NACK: Servidor saturado). |
+| 3.1 | Servidor B → Servidor A | `{"TASK": "WORKER_RESPONSE", "STATUS": "ACK",  "WORKERS": ["WORKER_IP": ...] }` | Enviar uma resposta positiva de pedido de trabalhadores emprestado. |
+| 3.2 | Servidor B → Servidor A | `{"TASK": "WORKER_RESPONSE", "STATUS": "NACK",  "WORKERS": [] }` | Enviar uma resposta negativa de pedido de trabalhadores emprestado. |
