@@ -4,22 +4,45 @@ import threading
 import json
 import time
 
-HOST = "127.0.0.1"
-PORT = 8000
+HOST = "10.62.217.212"
+PORT = 5000
 
-WORKERS = []
+WORKERS = ["10.62.217.21"]
 
-MASTERS = {"joao" : "10.62.217.99", "thales.martins" : "10.62.217.217",
-"thiago.filho" : "10.62.217.204"}
+MASTERS = {
+  "servers": [
+    {
+      "ip": "10.62.217.199",
+      "port": 5000,
+      "name": "joao"
+    },
+    {
+      "ip": "10.62.217.16",
+      "port": 5000,
+      "name": "thales.martins"
+    },
+    {
+      "ip": "10.62.217.209",
+      "port": 5000,
+      "name": "thiago.machado"
+    },
+    {
+      "ip": "10.62.217.203",
+      "port": 5000,
+      "name": "thiago.filho"
+    }
+  ]
+}
+
 
 SEND_ALIVE = {
-  "SERVER": "ALIVE",
-  "TASK": "REQUEST"
+  "SERVER_ID": "rodrigo.everton",
+  "TASK": "HEARTBEAT"
 }
 
 RESPOND_ALIVE = {
-  "SERVER": "ALIVE",
-  "TASK": "RECIEVE"
+  "SERVER_ID": "rodrigo.everton",
+  "TASK": "HEARTBEAT"
 }
 
 ASK_FOR_WORKERS = {
@@ -43,6 +66,11 @@ ASK_FOR_WORKERS_RESPONSE_POSITIVE = {
   ]
 }
 
+QUERY_WORKER = {
+  "TASK": "QUERY",
+  "USER": "11111111111"
+}
+
 masters_alive = []
 workers_received = {}
 workers_lent = {}
@@ -52,41 +80,52 @@ def send_json(conn, obj):
     data = json.dumps(obj) + "\n"
     conn.sendall(data.encode("utf-8"))
 
-def send_alive(c):
-    for key, value in MASTERS():
-        c.connect((value, PORT))
-        print(f"sending alive to '{key}' at '{value}:{PORT}'")
+def send_alive():
+    servers = MASTERS["servers"]
+    for server in servers:
+        ip = server["ip"]
+        port = server["port"]
+        name = server["name"]
 
-    send_json(c, SEND_ALIVE)
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.connect((ip, port))
+                print(f"sending ALIVE to '{name}' at {ip}:{port}")
+                send_json(s, SEND_ALIVE)
+        except Exception as e:
+            print(f"failed to connect to {ip}:{port} ({name}): {e}")
+
     
-def receive_alive(c):
+def receive_alive_master(c):
     while True:
         data = c.recv(1024)
-        time.sleep(30)
+        time.sleep(10)
         if not data:
             print('data not found')
             break
         send_json(c, RESPOND_ALIVE)
     c.close()
     
-def listen_masters(s):
-    s.listen(5)
+def listen_masters():
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind((HOST, PORT + 1))  # DIFFERENT PORT to avoid conflict
+    s.listen()
     print(f"server running on '{HOST}:{PORT}'")
     
     while True:
         c, addr = s.accept()
         print('receiving connection from:', addr[0], ':', addr[1])
-        threading.Thread(target=receive_alive, daemon=True, args=(c,)).start()
+        threading.Thread(target=receive_alive_master, daemon=True, args=(c,)).start()
 
 def ask_for_workers(c):
     for host in masters_alive:
         c.connect((host, PORT))
 
-        name = "not identified"
-        for key in MASTERS():
-            if MASTERS.get(key) == host:
-                name = key
-                break
+    name = "not identified"
+    for server in MASTERS["servers"]:
+        if server["ip"] == host:
+            name = server["name"]
+            break
             
         print(f"requesting workers to '{name}' at '{host}:{PORT}'")
         send_json(c, ASK_FOR_WORKERS)
@@ -97,27 +136,40 @@ def ask_for_workers(c):
 
         if status == "ACK":
             workers = response["WORKERS"]
-            for id in workers:
-                host = WORKERS.get(id) #adiciona de workers-conhecidos para workers-controlados
+            for worker in workers:
+                host = WORKERS.get("WORKER_UUID") #adiciona de workers-conhecidos para workers-controlados
                 workers_controlled[id] = host
             return
         else:
             return
-
-def query_workers(c):
-    for worker in workers_controlled:
         
+def receive_alive_worker(c):
+    while True:
+        data = c.recv(1024)
+        time.sleep(1)
+        if not data:
+            print('data not found')
+            break
+        send_json(c, QUERY_WORKER)
+    c.close()
+
+def listen_workers():
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind((HOST, PORT + 2))  # DIFFERENT PORT to avoid conflict
+    s.listen()
+    while True:
+        c, addr = s.accept()
+        print('receiving connection from:', addr[0], ':', addr[1])
+        threading.Thread(target=receive_alive_worker, daemon=True, args=(c,)).start()
 
 def main():
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.bind((HOST, PORT))
-    
     send_alive_thread = threading.Thread(target=send_alive)
-    receive_alive_thread = threading.Thread(target=listen_masters, args=(s,))
-    query_workers_thread = threading.Thread(target=query_workers, args=(s,))
+    receive_alive_thread = threading.Thread(target=listen_masters)
+    listen_workers_thread = threading.Thread(target=listen_workers)
 
     send_alive_thread.start()
     receive_alive_thread.start()
+    listen_workers_thread.start()
 
 if __name__ == '__main__':
     main()
