@@ -5,7 +5,7 @@
 
 ### 1. Nó Master
 - [ ]  master e se conectar com master
-- [ ] 
+- [ ]  master 
 
 ### Porta 
 =======
