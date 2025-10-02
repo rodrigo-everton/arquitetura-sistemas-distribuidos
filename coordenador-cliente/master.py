@@ -81,26 +81,28 @@ def send_json(conn, obj):
     conn.sendall(data.encode("utf-8"))
 
 def send_alive():
-    servers = MASTERS["servers"]
-    for server in servers:
-        ip = server["ip"]
-        port = server["port"]
-        name = server["name"]
+    while True:
+        servers = MASTERS["servers"]
+        for server in servers:
+            ip = server["ip"]
+            port = server["port"]
+            name = server["name"]
 
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.connect((ip, port))
-                print(f"sending ALIVE to '{name}' at {ip}:{port}")
-                send_json(s, SEND_ALIVE)
-        except Exception as e:
-            print(f"failed to connect to {ip}:{port} ({name}): {e}")
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.connect((ip, port))
+                    print(f"sending ALIVE to '{name}' at {ip}:{port}")
+                    send_json(s, SEND_ALIVE)
+            except Exception as e:
+                print(f"failed to connect to {ip}:{port} ({name})")
 
-    
 def receive_alive_master(c):
     data = c.recv(1024)
     if not data:
         print('data not found')
     send_json(c, RESPOND_ALIVE)
+    response = json.loads(data)
+    masters_alive.append(response.get("SERVER_ID"))
     c.close()
     
 def listen_masters():
