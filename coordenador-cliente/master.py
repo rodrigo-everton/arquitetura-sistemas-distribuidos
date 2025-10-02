@@ -117,6 +117,7 @@ def listen_masters():
         print('receiving connection from:', addr[0], ':', addr[1])
         threading.Thread(target=receive_alive_master, daemon=True, args=(c,)).start()
 
+#TODO: todo quebrado
 def ask_for_workers(c):
     for host in masters_alive:
         c.connect((host, PORT))
