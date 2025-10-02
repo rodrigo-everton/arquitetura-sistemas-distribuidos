@@ -97,13 +97,10 @@ def send_alive():
 
     
 def receive_alive_master(c):
-    while True:
-        data = c.recv(1024)
-        time.sleep(10)
-        if not data:
-            print('data not found')
-            break
-        send_json(c, RESPOND_ALIVE)
+    data = c.recv(1024)
+    if not data:
+        print('data not found')
+    send_json(c, RESPOND_ALIVE)
     c.close()
     
 def listen_masters():
@@ -117,6 +114,7 @@ def listen_masters():
         c, addr = s.accept()
         print('receiving connection from:', addr[0], ':', addr[1])
         threading.Thread(target=receive_alive_master, daemon=True, args=(c,)).start()
+        time.sleep(10)
 
 #TODO: todo quebrado
 def ask_for_workers(c):
