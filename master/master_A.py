@@ -5,7 +5,7 @@ import json
 import time
 
 SERVER_B_HOST = '127.0.0.1'
-SERVER_B_PORT = 9001
+SERVER_B_PORT = 9000
 HEARTBEAT_INTERVAL = 5  # segundos
 TIMEOUT = 15  # tempo para considerar servidor offline
 
@@ -15,7 +15,7 @@ class ServerA:
         self.servers_alive = {}  # {server_id: last_heartbeat_time}
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.connect((SERVER_B_HOST, SERVER_B_PORT))
-        print(f"[Server A] Conectado ao Server B em {SERVER_B_HOST}:{SERVER_B_PORT}")
+        print(f"[Server A] SERVER_ID: {self.server_id},  Conectado ao Server B em {SERVER_B_HOST}:{SERVER_B_PORT}")
 
     def send_heartbeat(self):
         while True:
@@ -42,7 +42,7 @@ class ServerA:
                 if msg.get("TASK") == "HEARTBEAT" and msg.get("RESPONSE") == "ALIVE":
                     server_id = msg.get("SERVER_ID")
                     self.servers_alive[server_id] = time.time()
-                    print(f"[Server A] Recebeu heartbeat ALIVE de {server_id}")
+                    print(f"[Server A] {self.server_id} Recebeu heartbeat ALIVE de {server_id}")
             except Exception as e:
                 print(f"[Server A] Erro ao receber dados: {e}")
                 break
