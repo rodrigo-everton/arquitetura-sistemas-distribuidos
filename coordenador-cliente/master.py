@@ -108,7 +108,8 @@ def receive_alive_master(c):
     
 def listen_masters():
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.bind((HOST, PORT + 1))  # DIFFERENT PORT to avoid conflict
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind((HOST, PORT))  # DIFFERENT PORT to avoid conflict
     s.listen()
     print(f"server running on '{HOST}:{PORT}'")
     
@@ -156,7 +157,8 @@ def receive_alive_worker(c):
 
 def listen_workers():
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.bind((HOST, PORT))  # DIFFERENT PORT to avoid conflict
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind((HOST, PORT + 2))  # DIFFERENT PORT to avoid conflict
     s.listen()
     while True:
         c, addr = s.accept()
