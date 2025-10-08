@@ -7,8 +7,6 @@ import time
 HOST = "10.62.217.212"
 PORT = 5000
 
-WORKERS = ["10.62.217.21"]
-
 MASTERS = {
   "servers": [
     {
@@ -42,7 +40,8 @@ SEND_ALIVE = {
 
 RESPOND_ALIVE = {
   "SERVER_ID": "rodrigo.everton",
-  "TASK": "HEARTBEAT"
+  "TASK": "HEARTBEAT",
+  "RESPONSE":"ALIVE"
 }
 
 ASK_FOR_WORKERS = {
@@ -72,15 +71,15 @@ QUERY_WORKER = {
 }
 
 masters_alive = []
-workers_received = {}
-workers_lent = {}
-workers_controlled = {}
+workers_received = []
+workers_lent = []
+workers_controlled = []
 
 def send_json(conn, obj):
     data = json.dumps(obj) + "\n"
     conn.sendall(data.encode("utf-8"))
 
-def send_alive():
+def send_alive_master():
     while True:
         servers = MASTERS["servers"]
         for server in servers:
@@ -108,7 +107,7 @@ def receive_alive_master(c):
 def listen_masters():
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    s.bind((HOST, PORT))  # DIFFERENT PORT to avoid conflict
+    s.bind((HOST, PORT))
     s.listen()
     print(f"server running on '{HOST}:{PORT}'")
     
@@ -145,28 +144,27 @@ def ask_for_workers(c):
         else:
             return
         
-def receive_alive_worker(c):
-    while True:
-        data = c.recv(1024)
-        time.sleep(1)
-        if not data:
-            print('data not found')
-            break
-        send_json(c, QUERY_WORKER)
+def receive_alive_worker(c, addr):
+    data = c.recv(1024)
+    time.sleep(1)
+    if not data:
+      print('data not found')
+    send_json(c, QUERY_WORKER)
+    workers_controlled.append(addr[0])
     c.close()
 
 def listen_workers():
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    s.bind((HOST, PORT + 2))  # DIFFERENT PORT to avoid conflict
+    s.bind((HOST, PORT + 1))
     s.listen()
     while True:
         c, addr = s.accept()
         print('receiving connection from:', addr[0], ':', addr[1])
-        threading.Thread(target=receive_alive_worker, daemon=True, args=(c,)).start()
+        threading.Thread(target=receive_alive_worker, daemon=True, args=(c, addr,)).start()
 
 def main():
-    send_alive_thread = threading.Thread(target=send_alive)
+    send_alive_thread = threading.Thread(target=send_alive_master)
     receive_alive_thread = threading.Thread(target=listen_masters)
     listen_workers_thread = threading.Thread(target=listen_workers)
 
