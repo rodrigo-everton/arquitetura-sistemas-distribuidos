@@ -138,7 +138,7 @@ def ask_for_workers(c):
         if status == "ACK":
             workers = response["WORKERS"]
             for worker in workers:
-                host = WORKERS.get("WORKER_UUID") #adiciona de workers-conhecidos para workers-controlados
+                host = workers_controlled.get("WORKER_UUID") #adiciona de workers-conhecidos para workers-controlados
                 workers_controlled[id] = host
             return
         else:
