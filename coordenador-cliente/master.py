@@ -163,6 +163,7 @@ def receive_balance(c):
   if data.get("STATUS") == "OK":
     saldo = data.get("SALDO")
     print(f"saldo: R${saldo}")
+    workers_controlled.append(addr[0])
   elif data.get("SATUS") == "NOK":
     erro = data.get("ERROR")
     print(f"error from worker: {erro}")
@@ -179,8 +180,6 @@ def receive_alive_worker(c, addr):
       return
     
     send_json(c, QUERY_WORKER)
-    workers_controlled.append(addr[0])
-
     receive_balance(c)
     c.close()
 
