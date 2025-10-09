@@ -13,6 +13,7 @@ class ServerA:
     def __init__(self):
         self.server_id = str(uuid.uuid4())
         self.servers_alive = {}  # {server_id: last_heartbeat_time}
+        self.lock = threading.Lock()  # tranca para concorrência do dicionário de servidores entre threads
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.connect((SERVER_B_HOST, SERVER_B_PORT))
         print(f"[Server A] SERVER_ID: {self.server_id},  Conectado ao Server B em {SERVER_B_HOST}:{SERVER_B_PORT}")
@@ -41,7 +42,8 @@ class ServerA:
                 msg = json.loads(data.decode())
                 if msg.get("TASK") == "HEARTBEAT" and msg.get("RESPONSE") == "ALIVE":
                     server_id = msg.get("SERVER_ID")
-                    self.servers_alive[server_id] = time.time()
+                    with self.lock:
+                        self.servers_alive[server_id] = time.time()
                     print(f"[Server A] {self.server_id} Recebeu heartbeat ALIVE de {server_id}")
             except Exception as e:
                 print(f"[Server A] Erro ao receber dados: {e}")
@@ -51,13 +53,14 @@ class ServerA:
         while True:
             now = time.time()
             to_remove = []
-            for server_id, last_time in self.servers_alive.items():
-                if now - last_time > TIMEOUT:
-                    print(f"[Server A] Servidor {server_id} considerado offline (timeout)")
-                    to_remove.append(server_id)
-            for server_id in to_remove:
-                del self.servers_alive[server_id]
-            time.sleep(HEARTBEAT_INTERVAL)
+            with self.lock:
+                for server_id, last_time in self.servers_alive.items():
+                    if now - last_time > TIMEOUT:
+                        print(f"[Server A] Servidor {server_id} considerado offline (timeout)")
+                        to_remove.append(server_id)
+                for server_id in to_remove:
+                    del self.servers_alive[server_id]
+                time.sleep(HEARTBEAT_INTERVAL)
 
     def start(self):
         threading.Thread(target=self.send_heartbeat, daemon=True).start()
