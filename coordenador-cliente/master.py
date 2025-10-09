@@ -123,9 +123,14 @@ def listen_masters():
     
     while True:
         c, addr = s.accept()
-        print(f"receiving connection from '{addr[0]}:{addr[1]}'")
-        threading.Thread(target=receive_alive_master, daemon=True, args=(c,)).start()
-        time.sleep(10)
+        servers = MASTERS["servers"]
+        for server in servers:
+            ip = server["ip"]
+            name = server["name"]
+            if ip == addr[0]:
+                print(f"receiving connection from '{name}' at '{ip}:{addr[1]}'")
+                threading.Thread(target=receive_alive_master, daemon=True, args=(c,)).start()
+                time.sleep(10)
 
 #TODO: todo quebrado
 def ask_for_workers(c):
@@ -203,4 +208,4 @@ def main():
     listen_workers_thread.start()
 
 if __name__ == '__main__':
-    main()
+  main()
