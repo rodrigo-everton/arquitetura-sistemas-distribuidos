@@ -4,6 +4,8 @@ import threading
 import json
 import time
 
+#CONSTANTS
+
 HOST = "10.62.217.212"
 PORT = 5000
 
@@ -32,13 +34,21 @@ MASTERS = {
   ]
 }
 
+#WORKER
 
-SEND_ALIVE = {
+QUERY_WORKER = {
+  "TASK": "QUERY",
+  "USER": "11111111111"
+}
+
+#MASTER
+
+SEND_ALIVE_MASTER = {
   "SERVER_ID": "rodrigo.everton",
   "TASK": "HEARTBEAT"
 }
 
-RESPOND_ALIVE = {
+RESPOND_ALIVE_MASTER = {
   "SERVER_ID": "rodrigo.everton",
   "TASK": "HEARTBEAT",
   "RESPONSE":"ALIVE"
@@ -65,15 +75,15 @@ ASK_FOR_WORKERS_RESPONSE_POSITIVE = {
   ]
 }
 
-QUERY_WORKER = {
-  "TASK": "QUERY",
-  "USER": "11111111111"
-}
+#VARIABLES
 
 masters_alive = []
 workers_received = []
 workers_lent = []
 workers_controlled = []
+errorCounter = 0
+
+#FUNCTIONS
 
 def send_json(conn, obj):
     data = json.dumps(obj) + "\n"
@@ -91,15 +101,15 @@ def send_alive_master():
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                     s.connect((ip, port))
                     print(f"sending ALIVE to '{name}' at {ip}:{port}")
-                    send_json(s, SEND_ALIVE)
+                    send_json(s, SEND_ALIVE_MASTER)
             except Exception as e:
                 print(f"failed to connect to {ip}:{port} ({name})")
 
 def receive_alive_master(c):
     data = c.recv(1024)
     if not data:
-        print('data not found')
-    send_json(c, RESPOND_ALIVE)
+      print('data not found')
+    send_json(c, RESPOND_ALIVE_MASTER)
     response = json.loads(data)
     masters_alive.append(response.get("SERVER_ID"))
     c.close()
@@ -113,7 +123,7 @@ def listen_masters():
     
     while True:
         c, addr = s.accept()
-        print('receiving connection from:', addr[0], ':', addr[1])
+        print(f"receiving connection from '{addr[0]}:{addr[1]}'")
         threading.Thread(target=receive_alive_master, daemon=True, args=(c,)).start()
         time.sleep(10)
 
@@ -138,19 +148,40 @@ def ask_for_workers(c):
         if status == "ACK":
             workers = response["WORKERS"]
             for worker in workers:
-                host = workers_controlled.get("WORKER_UUID") #adiciona de workers-conhecidos para workers-controlados
+                host = workers_controlled.get("WORKER_UUID")
                 workers_controlled[id] = host
             return
         else:
             return
+
+def receive_balance(c):
+  data = c.recv(1024)
+  if not data:
+    print('data not found')
+    return
+
+  if data.get("STATUS") == "OK":
+    saldo = data.get("SALDO")
+    print(f"saldo: R${saldo}")
+  elif data.get("SATUS") == "NOK":
+    erro = data.get("ERROR")
+    print(f"error from worker: {erro}")
+    errorCounter += 1
+  else:
+    errorCounter += 1
         
 def receive_alive_worker(c, addr):
     data = c.recv(1024)
     time.sleep(1)
+    
     if not data:
       print('data not found')
+      return
+    
     send_json(c, QUERY_WORKER)
     workers_controlled.append(addr[0])
+
+    receive_balance(c)
     c.close()
 
 def listen_workers():
