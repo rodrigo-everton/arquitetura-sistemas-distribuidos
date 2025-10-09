@@ -154,7 +154,7 @@ def ask_for_workers(c):
         else:
             return
 
-def receive_balance(c):
+def receive_balance(c, addr):
   data = c.recv(1024)
   if not data:
     print('data not found')
@@ -180,7 +180,7 @@ def receive_alive_worker(c, addr):
       return
     
     send_json(c, QUERY_WORKER)
-    receive_balance(c)
+    receive_balance(c, addr)
     c.close()
 
 def listen_workers():
