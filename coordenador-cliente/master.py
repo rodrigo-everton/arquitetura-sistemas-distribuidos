@@ -44,12 +44,12 @@ QUERY_WORKER = {
 #MASTER
 
 SEND_ALIVE_MASTER = {
-  "SERVER_ID": "rodrigo.everton",
+  "MASTER": "rodrigo.everton",
   "TASK": "HEARTBEAT"
 }
 
 RESPOND_ALIVE_MASTER = {
-  "SERVER_ID": "rodrigo.everton",
+  "MASTER": "rodrigo.everton",
   "TASK": "HEARTBEAT",
   "RESPONSE":"ALIVE"
 }
@@ -77,10 +77,10 @@ ASK_FOR_WORKERS_RESPONSE_POSITIVE = {
 
 #VARIABLES
 
-masters_alive = []
-workers_received = []
-workers_lent = []
-workers_controlled = []
+masters_alive = {0}
+workers_received = {0}
+workers_lent = {0}
+workers_controlled = {0}
 errorCounter = 0
 
 #FUNCTIONS
@@ -100,18 +100,18 @@ def send_alive_master():
             try:
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                     s.connect((ip, port))
-                    print(f"sending ALIVE to '{name}' at {ip}:{port}")
+                    print(f"sending ALIVE to '{name}' at '{ip}:{port}'")
                     send_json(s, SEND_ALIVE_MASTER)
             except Exception as e:
-                print(f"failed to connect to {ip}:{port} ({name})")
+                print(f"failed to connect to '{name}' at '{ip}:{port}'")
 
-def receive_alive_master(c):
+def receive_alive_master(c, addr):
     data = c.recv(1024)
     if not data:
       print('data not found')
+      return
     send_json(c, RESPOND_ALIVE_MASTER)
-    response = json.loads(data)
-    masters_alive.append(response.get("SERVER_ID"))
+    masters_alive.add(addr[0])
     c.close()
     
 def listen_masters():
@@ -128,8 +128,8 @@ def listen_masters():
             ip = server["ip"]
             name = server["name"]
             if ip == addr[0]:
-                print(f"receiving connection from '{name}' at '{ip}:{addr[1]}'")
-                threading.Thread(target=receive_alive_master, daemon=True, args=(c,)).start()
+                print(f"receiving connection from SERVER '{name}' at '{ip}:{addr[1]}'")
+                threading.Thread(target=receive_alive_master, daemon=True, args=(c, addr,)).start()
                 time.sleep(10)
 
 #TODO: todo quebrado
@@ -160,16 +160,19 @@ def ask_for_workers(c):
             return
 
 def receive_balance(c, addr):
+  global errorCounter
   data = c.recv(1024)
+
   if not data:
     print('data not found')
+    errorCounter += 1
     return
 
   if data.get("STATUS") == "OK":
     saldo = data.get("SALDO")
     print(f"saldo: R${saldo}")
-    workers_controlled.append(addr[0])
-  elif data.get("SATUS") == "NOK":
+    workers_controlled.add(addr[0])
+  elif data.get("STATUS") == "NOK":
     erro = data.get("ERROR")
     print(f"error from worker: {erro}")
     errorCounter += 1
@@ -178,7 +181,6 @@ def receive_balance(c, addr):
         
 def receive_alive_worker(c, addr):
     data = c.recv(1024)
-    time.sleep(1)
     
     if not data:
       print('data not found')
@@ -195,8 +197,9 @@ def listen_workers():
     s.listen()
     while True:
         c, addr = s.accept()
-        print('receiving connection from:', addr[0], ':', addr[1])
+        print(f"receiving connection from WORKER '{addr[0]}:{addr[1]}'")
         threading.Thread(target=receive_alive_worker, daemon=True, args=(c, addr,)).start()
+        time.sleep(1)
 
 def main():
     send_alive_thread = threading.Thread(target=send_alive_master)
