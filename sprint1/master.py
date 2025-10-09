@@ -15,7 +15,7 @@ import socket, threading, json, time, uuid, sys
 # ====================================================================
 
 # 👉 IP e Porta do SEU GRUPO (Grupo 2)
-HOST = "127.0.0.1"   # para testar local você pode usar "0.0.0.0" ou "127.0.0.1"
+HOST = "10.62.217.212"   # para testar local você pode usar "0.0.0.0" ou "127.0.0.1"
 PORT = 5900
 
 # Intervalos de comunicação
