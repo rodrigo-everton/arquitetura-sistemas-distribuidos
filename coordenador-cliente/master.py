@@ -13,22 +13,18 @@ MASTERS = {
   "servers": [
     {
       "ip": "10.62.217.199",
-      "port": 5000,
       "name": "joao"
     },
     {
       "ip": "10.62.217.16",
-      "port": 5000,
       "name": "thales.martins"
     },
     {
       "ip": "10.62.217.209",
-      "port": 5000,
       "name": "thiago.machado"
     },
     {
       "ip": "10.62.217.203",
-      "port": 5000,
       "name": "thiago.filho"
     }
   ]
@@ -94,16 +90,15 @@ def send_alive_master():
         servers = MASTERS["servers"]
         for server in servers:
             ip = server["ip"]
-            port = server["port"]
             name = server["name"]
 
             try:
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                    s.connect((ip, port))
-                    print(f"sending ALIVE to '{name}' at '{ip}:{port}'")
+                    s.connect((ip, PORT))
+                    print(f"sending ALIVE to '{name}' at '{ip}:{PORT}'")
                     send_json(s, SEND_ALIVE_MASTER)
             except Exception as e:
-                print(f"failed to connect to '{name}' at '{ip}:{port}'")
+                print(f"failed to connect to '{name}' at '{ip}:{PORT}'")
 
 def receive_alive_master(c, addr):
     data = c.recv(1024)
