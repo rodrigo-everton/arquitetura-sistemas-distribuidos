@@ -126,7 +126,7 @@ def receive_alive_master(c, addr):
     
     send_json(c, RESPOND_ALIVE_MASTER)
     masters_alive.add(addr[0])
-    masters_alive_dict[data.get("WORKER_UUID")] = addr[0]
+    masters_alive_dict[data.get("MASTER")] = addr[0]
     c.close()
     
 def listen_masters():
@@ -191,8 +191,11 @@ def send_workers(addr):
   s.listen()
 
   send_worker = SEND_WORKER
-  send_worker["MASTER_REDIRECT"] = masters_alive[WORKER_REQUEST]
-  send_json(s, SEND_WORKER)
+  for key, val in masters_alive_dict.items():
+    if val == addr:
+      master_id = key
+  send_worker["MASTER_REDIRECT"] = masters_alive_dict[master_id]
+  send_json(s, send_worker)
 
 def receive_balance(c, addr):
   global errorCounter
