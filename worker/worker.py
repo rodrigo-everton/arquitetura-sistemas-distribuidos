@@ -36,8 +36,10 @@ if __name__ == '__main__':
                             "TASK":"QUERY",
                             "STATUS":"OK"
                         }
+                    time.sleep(1)
                     s.sendall(json.dumps(output).encode())
-                    print("✓")
+                    print(data)
+                    print(output)
                 else:
                     output = {
                             "WORKER":"EDUARDO",
@@ -47,9 +49,10 @@ if __name__ == '__main__':
                             "STATUS":"NOK",
                             "ERROR":"User not found"
                         }
-                    time.sleep(60)
+                    time.sleep(1)
                     s.sendall(json.dumps(output).encode())
                     print(data)
+                    print(output)
                 
             except json.JSONDecodeError:
                 print("Erro de decode")
