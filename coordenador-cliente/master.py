@@ -37,6 +37,12 @@ QUERY_WORKER = {
   "USER": "11111111111"
 }
 
+SEND_WORKER = {
+       "MASTER": "[rodrigo.everton]",
+       "TASK": "REDIRECT",
+       "MASTER_REDIRECT": []
+}
+
 #MASTER
 
 SEND_ALIVE_MASTER = {
@@ -99,7 +105,7 @@ def send_alive_master():
                     print(f"sending ALIVE to '{name}' at '{ip}:{PORT}'")
                     send_json(s, SEND_ALIVE_MASTER)
             except Exception as e:
-                print(f"failed to connect to '{name}' at '{ip}:{PORT}'")
+                print(f"failed to connect to SERVER '{name}' at '{ip}:{PORT}'")
 
 def receive_alive_master(c, addr):
     data = c.recv(1024)
@@ -146,7 +152,7 @@ def ask_for_workers():
           print(f"ASK_FOR_WORKERS to '{name}' at '{host}:{PORT}'")
           send_json(s, ASK_FOR_WORKERS)
       except Exception as e:
-        print(f"failed to connect to '{name}' at '{host}:{PORT}'")
+        print(f"failed to connect to SERVER '{name}' at '{host}:{PORT}'")
 
       data = s.recv(1024)
       response = json.loads(data)
@@ -163,14 +169,27 @@ def ask_for_workers():
       return
 
 def send_workers():
-  
+  s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+  s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+  check_counter
+
+  s.bind((HOST, PORT + 1))
+  s.listen()
 
 def receive_balance(c, addr):
   global errorCounter
-  data = c.recv(1024)
+  raw_data = c.recv(1024)
 
-  if not data:
+  if not raw_data:
     print('data not found')
+    errorCounter += 1
+    return
+
+  try:
+    data = json.loads(raw_data.decode())
+  except Exception as e:
+    print(f"Failed to parse JSON: {e}")
     errorCounter += 1
     return
 
@@ -180,7 +199,7 @@ def receive_balance(c, addr):
     workers_controlled.add(addr[0])
   elif data.get("STATUS") == "NOK":
     erro = data.get("ERROR")
-    print(f"error from worker: {erro}")
+    print(f"error from WORKER: {erro}")
     errorCounter += 1
   else:
     errorCounter += 1
@@ -208,10 +227,12 @@ def listen_workers():
         time.sleep(1)
 
 def main():
+    check_counter_thread = threading.Thread(target=check_counter)
     send_alive_thread = threading.Thread(target=send_alive_master)
     receive_alive_thread = threading.Thread(target=listen_masters)
     listen_workers_thread = threading.Thread(target=listen_workers)
 
+    check_counter_thread.start()
     send_alive_thread.start()
     receive_alive_thread.start()
     listen_workers_thread.start()
