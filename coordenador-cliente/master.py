@@ -51,24 +51,19 @@ RESPOND_ALIVE_MASTER = {
 }
 
 ASK_FOR_WORKERS = {
-  "TASK": "WORKER_REQUEST",
-  "WORKERS_NEEDED": 5
+  "MASTER": "rodrigo.everton",
+  "TASK": "WORKER_REQUEST"
 }
 
 ASK_FOR_WORKERS_RESPONSE_NEGATIVE = {
-  "TASK": "WORKER_RESPONSE",
-  "STATUS": "NACK",
-  "WORKERS": []
+  "MASTER": "rodrigo.everton",
+  "RESPONSE": "UNAVAILABLE"
 }
 
 ASK_FOR_WORKERS_RESPONSE_POSITIVE = {
-  "TASK": "WORKER_RESPONSE",
-  "STATUS": "ACK",
-  "MASTER_UUID": "UUID",
-  "WORKERS": [
-    {"WORKER_UUID": "..."},
-    {"WORKER_UUID": "..."}
-  ]
+  "MASTER": "[ID_i]",
+  "RESPONSE": "AVAILABLE",
+  "WORKERS": {"WORKER_UUID":"uuid"}
 }
 
 #VARIABLES
@@ -84,6 +79,12 @@ errorCounter = 0
 def send_json(conn, obj):
     data = json.dumps(obj) + "\n"
     conn.sendall(data.encode("utf-8"))
+
+def check_counter():
+  while True:
+    time.sleep(10)
+    if errorCounter >= 10:
+      ask_for_workers()
 
 def send_alive_master():
     while True:
@@ -102,9 +103,11 @@ def send_alive_master():
 
 def receive_alive_master(c, addr):
     data = c.recv(1024)
+    
     if not data:
       print('data not found')
       return
+    
     send_json(c, RESPOND_ALIVE_MASTER)
     masters_alive.add(addr[0])
     c.close()
@@ -127,32 +130,40 @@ def listen_masters():
                 threading.Thread(target=receive_alive_master, daemon=True, args=(c, addr,)).start()
                 time.sleep(10)
 
-#TODO: todo quebrado
-def ask_for_workers(c):
+def ask_for_workers():
+    global errorCounter
     for host in masters_alive:
-        c.connect((host, PORT))
-
-    name = "not identified"
-    for server in MASTERS["servers"]:
-        if server["ip"] == host:
-            name = server["name"]
-            break
+      try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+          s.connect((host, PORT))
+          
+          name = "not identified"
+          for server in MASTERS["servers"]:
+            if server["ip"] == host:
+              name = server["name"]
+              break
             
-        print(f"requesting workers to '{name}' at '{host}:{PORT}'")
-        send_json(c, ASK_FOR_WORKERS)
+          print(f"ASK_FOR_WORKERS to '{name}' at '{host}:{PORT}'")
+          send_json(s, ASK_FOR_WORKERS)
+      except Exception as e:
+        print(f"failed to connect to '{name}' at '{host}:{PORT}'")
 
-        data = c.recv(1024)
-        response = json.loads(data)
-        status = response.get("STATUS")
+      data = s.recv(1024)
+      response = json.loads(data)
+      status = response.get("RESPONSE")
 
-        if status == "ACK":
-            workers = response["WORKERS"]
-            for worker in workers:
-                host = workers_controlled.get("WORKER_UUID")
-                workers_controlled[id] = host
-            return
-        else:
-            return
+      if status == "AVAILABLE":
+        workers = response["WORKERS"]
+        for worker in workers:
+          #TODO: dicionario?
+          workers_received.add(worker)
+          workers_controlled.add(worker)
+      s.close()
+      errorCounter = 0     
+      return
+
+def send_workers():
+  
 
 def receive_balance(c, addr):
   global errorCounter
