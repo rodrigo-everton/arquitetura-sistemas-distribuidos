@@ -3,6 +3,7 @@ from _thread import start_new_thread
 import threading
 import json
 import time
+import random
 
 #CONSTANTS
 
@@ -38,36 +39,36 @@ QUERY_WORKER = {
 }
 
 SEND_WORKER = {
-       "MASTER": "[rodrigo.everton]",
-       "TASK": "REDIRECT",
-       "MASTER_REDIRECT": []
+  "MASTER": "[2]",
+  "TASK": "REDIRECT",
+  "MASTER_REDIRECT": [0]
 }
 
 #MASTER
 
 SEND_ALIVE_MASTER = {
-  "MASTER": "rodrigo.everton",
+  "MASTER": "2",
   "TASK": "HEARTBEAT"
 }
 
 RESPOND_ALIVE_MASTER = {
-  "MASTER": "rodrigo.everton",
+  "MASTER": "2",
   "TASK": "HEARTBEAT",
   "RESPONSE":"ALIVE"
 }
 
 ASK_FOR_WORKERS = {
-  "MASTER": "rodrigo.everton",
+  "MASTER": "[2]",
   "TASK": "WORKER_REQUEST"
 }
 
 ASK_FOR_WORKERS_RESPONSE_NEGATIVE = {
-  "MASTER": "rodrigo.everton",
+  "MASTER": "[2]",
   "RESPONSE": "UNAVAILABLE"
 }
 
 ASK_FOR_WORKERS_RESPONSE_POSITIVE = {
-  "MASTER": "[ID_i]",
+  "MASTER": "[2]",
   "RESPONSE": "AVAILABLE",
   "WORKERS": {"WORKER_UUID":"uuid"}
 }
@@ -75,9 +76,10 @@ ASK_FOR_WORKERS_RESPONSE_POSITIVE = {
 #VARIABLES
 
 masters_alive = {0}
-workers_received = {0}
+masters_alive_dict = dict()
+workers_received = dict()
 workers_lent = {0}
-workers_controlled = {0}
+workers_controlled = dict()
 errorCounter = 0
 
 #FUNCTIONS
@@ -108,14 +110,23 @@ def send_alive_master():
                 print(f"failed to connect to SERVER '{name}' at '{ip}:{PORT}'")
 
 def receive_alive_master(c, addr):
-    data = c.recv(1024)
+    raw_data = c.recv(1024)
     
-    if not data:
+    if not raw_data:
       print('data not found')
+      return
+
+    try:
+      data = json.loads(raw_data.decode())
+      if data["TASK"] == "WORKER_REQUEST":
+        send_workers(addr[0])
+    except Exception as e:
+      print(f"Failed to parse JSON: {e}")
       return
     
     send_json(c, RESPOND_ALIVE_MASTER)
     masters_alive.add(addr[0])
+    masters_alive_dict[data.get("WORKER_UUID")] = addr[0]
     c.close()
     
 def listen_masters():
@@ -161,21 +172,27 @@ def ask_for_workers():
       if status == "AVAILABLE":
         workers = response["WORKERS"]
         for worker in workers:
-          #TODO: dicionario?
-          workers_received.add(worker)
-          workers_controlled.add(worker)
+          key = list(worker.keys())[0]
+          value = worker[key]
+          workers_controlled[key] = value
+          workers_controlled[key] = value
       s.close()
       errorCounter = 0     
       return
 
-def send_workers():
+def send_workers(addr):
   s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
   s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
-  check_counter
+  random_key = random.choice(list(workers_controlled.keys()))
+  worker_host = workers_controlled[random_key]
 
-  s.bind((HOST, PORT + 1))
+  s.bind((worker_host, PORT + 1))
   s.listen()
+
+  send_worker = SEND_WORKER
+  send_worker["MASTER_REDIRECT"] = masters_alive[WORKER_REQUEST]
+  send_json(s, SEND_WORKER)
 
 def receive_balance(c, addr):
   global errorCounter
@@ -188,6 +205,7 @@ def receive_balance(c, addr):
 
   try:
     data = json.loads(raw_data.decode())
+    print(data)
   except Exception as e:
     print(f"Failed to parse JSON: {e}")
     errorCounter += 1
@@ -196,7 +214,6 @@ def receive_balance(c, addr):
   if data.get("STATUS") == "OK":
     saldo = data.get("SALDO")
     print(f"saldo: R${saldo}")
-    workers_controlled.add(addr[0])
   elif data.get("STATUS") == "NOK":
     erro = data.get("ERROR")
     print(f"error from WORKER: {erro}")
@@ -205,15 +222,22 @@ def receive_balance(c, addr):
     errorCounter += 1
         
 def receive_alive_worker(c, addr):
-    data = c.recv(1024)
+  raw_data = c.recv(1024)
+
+  if not raw_data:
+    print('data not found')
+    return
+
+  try:
+    data = json.loads(raw_data.decode())
+    workers_controlled[data.get("WORKER_UUID")] = addr[0]
+  except Exception as e:
+    print(f"Failed to parse JSON: {e}")
+    return
     
-    if not data:
-      print('data not found')
-      return
-    
-    send_json(c, QUERY_WORKER)
-    receive_balance(c, addr)
-    c.close()
+  send_json(c, QUERY_WORKER)
+  receive_balance(c, addr)
+  c.close()
 
 def listen_workers():
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
