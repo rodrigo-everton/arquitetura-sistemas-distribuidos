@@ -74,6 +74,8 @@ ASK_FOR_WORKERS_RESPONSE_POSITIVE = {
   "WORKERS": {"WORKER_UUID":"uuid"}
 }
 
+THRESHOLD = 10
+
 #VARIABLES
 
 masters_alive = {0}
@@ -82,7 +84,6 @@ workers_received = dict()
 workers_lent = {0}
 workers_controlled = dict()
 workers_lock = Lock()
-errorCounter = 0 #WRONG THRESHOLD
 
 #FUNCTIONS
 
@@ -90,11 +91,12 @@ def send_json(conn, obj):
     data = json.dumps(obj) + "\n"
     conn.sendall(data.encode("utf-8"))
 
-def check_counter(): #WRONG THRESHOLD
+def check_threshold():
   while True:
     time.sleep(10)
-    if errorCounter >= 10:
-      ask_for_workers()
+    with workers_lock:
+      if len(workers_controlled) >= THRESHOLD:
+        ask_for_workers()
 
 def send_alive_master():
     while True:
@@ -150,7 +152,6 @@ def listen_masters():
                 time.sleep(10)
 
 def ask_for_workers():
-    global errorCounter #WRONG THRESHOLD
     for host in masters_alive:
       try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -173,20 +174,19 @@ def ask_for_workers():
 
       if status == "AVAILABLE":
         workers = response["WORKERS"]
-        with workers_lock():
+        with workers_lock:
           for worker in workers:
             key = list(worker.keys())[0]
             value = worker[key]
             workers_controlled[key] = value
             workers_controlled[key] = value
       s.close()
-      errorCounter = 0 #WRONG THRESHOLD
       return
 
 def send_workers(addr):
   s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
   s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-  with workers_lock():
+  with workers_lock:
     if not workers_controlled:
        print("No workers available to send.")
        return
@@ -204,12 +204,10 @@ def send_workers(addr):
   send_json(s, send_worker)
 
 def receive_balance(c, addr):
-  global errorCounter #WRONG THRESHOLD
   raw_data = c.recv(1024)
 
   if not raw_data:
     print('data not found')
-    errorCounter += 1 #WRONG THRESHOLD
     return
 
   try:
@@ -217,7 +215,6 @@ def receive_balance(c, addr):
     print(data)
   except Exception as e:
     print(f"Failed to parse JSON: {e}")
-    errorCounter += 1 #WRONG THRESHOLD
     return
 
   if data.get("STATUS") == "OK":
@@ -226,9 +223,8 @@ def receive_balance(c, addr):
   elif data.get("STATUS") == "NOK":
     erro = data.get("ERROR")
     print(f"error from WORKER: {erro}")
-    errorCounter += 1 #WRONG THRESHOLD
   else:
-    errorCounter += 1 #WRONG THRESHOLD
+    print("unknown STATUS from WORKER")
         
 def receive_alive_worker(c, addr):
   raw_data = c.recv(1024)
@@ -239,7 +235,7 @@ def receive_alive_worker(c, addr):
 
   try:
     data = json.loads(raw_data.decode())
-    with workers_lock():
+    with workers_lock:
       workers_controlled[data.get("WORKER_UUID")] = addr[0]
   except Exception as e:
     print(f"Failed to parse JSON: {e}")
@@ -261,12 +257,12 @@ def listen_workers():
         time.sleep(1)
 
 def main():
-    check_counter_thread = threading.Thread(target=check_counter) #WRONG THREAD PURPOSE
+    check_threshold_thread = threading.Thread(target=check_threshold)
     send_alive_thread = threading.Thread(target=send_alive_master)
     receive_alive_thread = threading.Thread(target=listen_masters)
     listen_workers_thread = threading.Thread(target=listen_workers)
 
-    check_counter_thread.start() #WRONG THREAD PURPOSE
+    check_threshold_thread.start()
     send_alive_thread.start()
     receive_alive_thread.start()
     listen_workers_thread.start()
