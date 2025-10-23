@@ -68,7 +68,7 @@ masters_alive_dict = dict()
 workers_received = dict()
 workers_lent = {0}
 workers_controlled = dict()
-errorCounter = 0
+errorCounter = 10
 
 #FUNCTIONS
 
@@ -168,7 +168,7 @@ def ask_for_workers():
           errorCounter = 0     
           return
       except Exception as e:
-        print(f"failed to connect to SERVER '{name}' at '{host}:{PORT}'")
+        print(f"failed to connect to SERVER '{name}' at '{host}:{PORT}' with error: {e}")
 
 def send_workers(addr):
   s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
