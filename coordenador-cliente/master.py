@@ -8,8 +8,9 @@ import random
 
 #CONSTANTS
 
-HOST = "10.62.217.212"
+HOST = "192.168.15.6"
 PORT = 5000
+WORKER_PORT = 5001
 
 MASTERS = {
   "servers": [
@@ -149,15 +150,15 @@ def listen_masters():
             if ip == addr[0]:
                 print(f"receiving connection from SERVER '{name}' at '{ip}:{addr[1]}'")
                 threading.Thread(target=receive_alive_master, daemon=True, args=(c, addr,)).start()
-                time.sleep(10)
+                #time.sleep(10)     bloqueia novas conexões
 
 def ask_for_workers():
+    name = "not identified"
     for host in masters_alive:
       try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
           s.connect((host, PORT))
           
-          name = "not identified"
           for server in MASTERS["servers"]:
             if server["ip"] == host:
               name = server["name"]
@@ -165,23 +166,22 @@ def ask_for_workers():
             
           print(f"ASK_FOR_WORKERS to '{name}' at '{host}:{PORT}'")
           send_json(s, ASK_FOR_WORKERS)
+
+          data = s.recv(1024)
+          response = json.loads(data)
+          status = response.get("RESPONSE")
+
+          if status == "AVAILABLE":
+            workers = response["WORKERS"]
+            with workers_lock:
+              for worker in workers:
+                  key = list(worker.keys())[0]
+                  value = worker[key]
+                  workers_controlled[key] = value
+                  workers_controlled[key] = value
+          return
       except Exception as e:
         print(f"failed to connect to SERVER '{name}' at '{host}:{PORT}'")
-
-      data = s.recv(1024)
-      response = json.loads(data)
-      status = response.get("RESPONSE")
-
-      if status == "AVAILABLE":
-        workers = response["WORKERS"]
-        with workers_lock:
-          for worker in workers:
-            key = list(worker.keys())[0]
-            value = worker[key]
-            workers_controlled[key] = value
-            workers_controlled[key] = value
-      s.close()
-      return
 
 def send_workers(addr):
   s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -248,13 +248,13 @@ def receive_alive_worker(c, addr):
 def listen_workers():
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    s.bind((HOST, PORT + 1))
+    s.bind((HOST, WORKER_PORT))
     s.listen()
+    print(f"listening workers on {HOST}:{WORKER_PORT}")
     while True:
         c, addr = s.accept()
         print(f"receiving connection from WORKER '{addr[0]}:{addr[1]}'")
         threading.Thread(target=receive_alive_worker, daemon=True, args=(c, addr,)).start()
-        time.sleep(1)
 
 def main():
     check_threshold_thread = threading.Thread(target=check_threshold)
