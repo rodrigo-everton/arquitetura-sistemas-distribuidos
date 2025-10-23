@@ -7,27 +7,15 @@ import random
 
 #CONSTANTS
 
-HOST = "10.62.217.212"
+HOST = "127.0.0.2"
 PORT = 5000
 
 MASTERS = {
   "servers": [
     {
-      "ip": "10.62.217.199",
-      "name": "joao"
+      "ip": "127.0.0.1",
+      "name": "primeiro"
     },
-    {
-      "ip": "10.62.217.16",
-      "name": "thales.martins"
-    },
-    {
-      "ip": "10.62.217.209",
-      "name": "thiago.machado"
-    },
-    {
-      "ip": "10.62.217.203",
-      "name": "thiago.filho"
-    }
   ]
 }
 
@@ -39,7 +27,7 @@ QUERY_WORKER = {
 }
 
 SEND_WORKER = {
-  "MASTER": [2],
+  "MASTER": "[2]",
   "TASK": "REDIRECT",
   "MASTER_REDIRECT": [0]
 }
@@ -58,12 +46,12 @@ RESPOND_ALIVE_MASTER = {
 }
 
 ASK_FOR_WORKERS = {
-  "MASTER": [2],
+  "MASTER": "[2]",
   "TASK": "WORKER_REQUEST"
 }
 
 ASK_FOR_WORKERS_RESPONSE_NEGATIVE = {
-  "MASTER": [2],
+  "MASTER": "[2]",
   "RESPONSE": "UNAVAILABLE"
 }
 
@@ -80,7 +68,7 @@ masters_alive_dict = dict()
 workers_received = dict()
 workers_lent = {0}
 workers_controlled = dict()
-errorCounter = 0
+errorCounter = 10
 
 #FUNCTIONS
 
@@ -180,7 +168,7 @@ def ask_for_workers():
           errorCounter = 0     
           return
       except Exception as e:
-        print(f"failed to connect to SERVER '{name}' at '{host}:{PORT}'")
+        print(f"failed to connect to SERVER '{name}' at '{host}:{PORT}' with error: {e}")
 
 def send_workers(addr):
   s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -196,7 +184,7 @@ def send_workers(addr):
   for key, val in masters_alive_dict.items():
     if val == addr:
       master_id = key
-  send_worker["MASTER_REDIRECT"] = masters_alive_dict[master_id]
+  send_worker["MASTER_REDIRECT"] = [masters_alive_dict[master_id]]
   send_json(s, send_worker)
 
 def receive_balance(c, addr):

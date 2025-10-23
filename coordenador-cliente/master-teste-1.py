@@ -7,27 +7,15 @@ import random
 
 #CONSTANTS
 
-HOST = "10.62.217.212"
+HOST = "127.0.0.1"
 PORT = 5000
 
 MASTERS = {
   "servers": [
     {
-      "ip": "10.62.217.199",
-      "name": "joao"
+      "ip": "127.0.0.2",
+      "name": "segundo"
     },
-    {
-      "ip": "10.62.217.16",
-      "name": "thales.martins"
-    },
-    {
-      "ip": "10.62.217.209",
-      "name": "thiago.machado"
-    },
-    {
-      "ip": "10.62.217.203",
-      "name": "thiago.filho"
-    }
   ]
 }
 
@@ -47,12 +35,12 @@ SEND_WORKER = {
 #MASTER
 
 SEND_ALIVE_MASTER = {
-  "MASTER": "2",
+  "MASTER": [2],
   "TASK": "HEARTBEAT"
 }
 
 RESPOND_ALIVE_MASTER = {
-  "MASTER": "2",
+  "MASTER": [2],
   "TASK": "HEARTBEAT",
   "RESPONSE":"ALIVE"
 }
