@@ -68,7 +68,7 @@ masters_alive_dict = dict()
 workers_received = dict()
 workers_lent = {0}
 workers_controlled = dict()
-errorCounter = 10
+errorCounter = 0
 
 #FUNCTIONS
 
@@ -168,12 +168,17 @@ def ask_for_workers():
           errorCounter = 0     
           return
       except Exception as e:
-        print(f"failed to connect to SERVER '{name}' at '{host}:{PORT}' with error: {e}")
+        print(f"failed to connect to SERVER '{name}' at '{host}:{PORT}'")
 
 def send_workers(addr):
   s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
   s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
+  if len(workers_controlled) < 4:
+     s.connect((addr, PORT))
+     send_json(s, ASK_FOR_WORKERS_RESPONSE_NEGATIVE)
+
+  #to worker
   random_key = random.choice(list(workers_controlled.keys()))
   worker_host = workers_controlled[random_key]
 
@@ -184,8 +189,20 @@ def send_workers(addr):
   for key, val in masters_alive_dict.items():
     if val == addr:
       master_id = key
-  send_worker["MASTER_REDIRECT"] = [masters_alive_dict[master_id]]
+  send_worker["MASTER_REDIRECT"] = masters_alive_dict[master_id]
   send_json(s, send_worker)
+
+  #to master
+  try:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+      s.connect((addr, PORT))
+      response = ASK_FOR_WORKERS_RESPONSE_POSITIVE
+      workers = response["WORKERS"]
+      workers[0] = {random_key: worker_host}
+      response["WORKERS"] = workers
+      send_json(s, response)
+  except Exception as e:
+    print(f"failed to connect to SERVER at '{addr}:{PORT}' with error {e}")
 
 def receive_balance(c, addr):
   global errorCounter
