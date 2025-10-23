@@ -10,7 +10,6 @@ import random
 
 HOST = "192.168.15.6"
 PORT = 5000
-WORKER_PORT = 5001
 
 MASTERS = {
   "servers": [
@@ -75,15 +74,16 @@ ASK_FOR_WORKERS_RESPONSE_POSITIVE = {
   "WORKERS": {"WORKER_UUID":"uuid"}
 }
 
-THRESHOLD = 10
+THRESHOLD = 2
 
 #VARIABLES
 
-masters_alive = {0}
+masters_alive = set()
 masters_alive_dict = dict()
 workers_received = dict()
-workers_lent = {0}
+workers_lent = set()
 workers_controlled = dict()
+workers_conns = dict()
 workers_lock = Lock()
 
 #FUNCTIONS
@@ -98,6 +98,7 @@ def check_threshold():
     with workers_lock:
       if len(workers_controlled) >= THRESHOLD:
         ask_for_workers()
+
 
 def send_alive_master():
     while True:
@@ -119,15 +120,24 @@ def receive_alive_master(c, addr):
     
     if not raw_data:
       print('data not found')
+      c.close()
       return
 
     try:
       data = json.loads(raw_data.decode())
-      if data["TASK"] == "WORKER_REQUEST":
-        send_workers(addr[0])
     except Exception as e:
       print(f"Failed to parse JSON: {e}")
-      return
+      c.close()
+      return 
+    if data["TASK"] == "WORKER_REQUEST":
+      success = send_workers(addr[0])
+      if not success:
+        print(f"failed to send workers to {addr[0]}")
+        try:
+          send_json(c, ASK_FOR_WORKERS_RESPONSE_NEGATIVE)
+        except Exception as e:
+          print(f"Failed to parse JSON: {e}")
+          return
     
     send_json(c, RESPOND_ALIVE_MASTER)
     masters_alive.add(addr[0])
@@ -184,24 +194,34 @@ def ask_for_workers():
         print(f"failed to connect to SERVER '{name}' at '{host}:{PORT}'")
 
 def send_workers(addr):
-  s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-  s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
   with workers_lock:
     if not workers_controlled:
        print("No workers available to send.")
        return
     random_key = random.choice(list(workers_controlled.keys()))
     worker_host = workers_controlled[random_key]
+    worker_conn = workers_conns.get(random_key)
 
-  s.bind((worker_host, PORT + 1))
-  s.listen()
+    if not worker_conn:
+      print(f"No active connection found for worker {random_key}.")
+      return
 
-  send_worker = SEND_WORKER
+  send_worker = dict(SEND_WORKER)
   for key, val in masters_alive_dict.items():
     if val == addr:
       master_id = key
   send_worker["MASTER_REDIRECT"] = masters_alive_dict[master_id]
-  send_json(s, send_worker)
+  try:
+    send_json(worker_conn, send_worker)
+    try:
+      worker_conn.close()
+    except Exception:
+      pass
+    with workers_lock:
+      workers_controlled.pop(random_key, None)
+      workers_conns.pop(random_key, None)
+  except Exception as e:
+    print(f"Failed to send workers to {addr}: {e}")
 
 def receive_balance(c, addr):
   raw_data = c.recv(1024)
@@ -231,26 +251,70 @@ def receive_alive_worker(c, addr):
 
   if not raw_data:
     print('data not found')
+    c.close()
     return
 
   try:
     data = json.loads(raw_data.decode())
+    worker_uuid = data.get("WORKER_UUID")
+    if not worker_uuid:
+      print("WORKER_UUID not found in data")
+      c.close()
+      return
     with workers_lock:
-      workers_controlled[data.get("WORKER_UUID")] = addr[0]
+      workers_controlled[worker_uuid] = addr[0]
+      workers_conns[worker_uuid] = c
   except Exception as e:
     print(f"Failed to parse JSON: {e}")
+    c.close()
     return
-    
-  send_json(c, QUERY_WORKER)
-  receive_balance(c, addr)
-  c.close()
+  try:
+    send_json(c, QUERY_WORKER)
+    raw = c.recv(4096)
+    if raw:
+      try:
+        resp = json.loads(raw.decode())
+        print(resp)
+      except Exception as e:
+        print(f"Failed to parse worker response: {e}")
+    receive_balance(c, addr)
+  except Exception as e:
+    print(f"Error communicating with worker: {e}")
+    with workers_lock:
+      workers_controlled.pop(worker_uuid, None)
+      workers_conns.pop(worker_uuid, None)
+    try:
+      c.close()
+    except Exception:
+      pass
+    return
+  try:
+    while True:
+      more = c.recv(4096)
+      if not more:
+        break
+      try:
+        msg = json.loads(more.decode())
+        print("worker update:", msg)
+      except Exception:
+        pass
+  except Exception:
+    pass
+  finally:
+    with workers_lock:
+      workers_controlled.pop(worker_uuid, None)
+      workers_conns.pop(worker_uuid, None)
+    try:
+      c.close()
+    except Exception:
+      pass
 
 def listen_workers():
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    s.bind((HOST, WORKER_PORT))
+    s.bind((HOST, PORT + 1))
     s.listen()
-    print(f"listening workers on {HOST}:{WORKER_PORT}")
+    print(f"listening workers on {HOST}:{PORT + 1}")
     while True:
         c, addr = s.accept()
         print(f"receiving connection from WORKER '{addr[0]}:{addr[1]}'")
