@@ -63,7 +63,7 @@ ASK_FOR_WORKERS_RESPONSE_POSITIVE = {
 
 #VARIABLES
 
-masters_alive = {0}
+masters_alive = set()
 masters_alive_dict = dict()
 workers_received = dict()
 workers_lent = {0}

@@ -27,7 +27,7 @@ QUERY_WORKER = {
 }
 
 SEND_WORKER = {
-  "MASTER": "[2]",
+  "MASTER": [2],
   "TASK": "REDIRECT",
   "MASTER_REDIRECT": [0]
 }
@@ -46,12 +46,12 @@ RESPOND_ALIVE_MASTER = {
 }
 
 ASK_FOR_WORKERS = {
-  "MASTER": "[2]",
+  "MASTER": [2],
   "TASK": "WORKER_REQUEST"
 }
 
 ASK_FOR_WORKERS_RESPONSE_NEGATIVE = {
-  "MASTER": "[2]",
+  "MASTER": [2],
   "RESPONSE": "UNAVAILABLE"
 }
 
@@ -63,7 +63,7 @@ ASK_FOR_WORKERS_RESPONSE_POSITIVE = {
 
 #VARIABLES
 
-masters_alive = {0}
+masters_alive = set()
 masters_alive_dict = dict()
 workers_received = dict()
 workers_lent = {0}
