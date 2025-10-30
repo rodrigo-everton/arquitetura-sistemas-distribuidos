@@ -5,7 +5,7 @@ import uuid
 import time
 import random
 
-HOST = "10.62.217.21"  # IP do master (ex: master_a ou master_b)
+HOST = "10.62.217.10"  # IP do master (ex: master_a ou master_b)
 PORT = 5001             # Porta de comunicação com workers (PORT + 1)
 
 RECONNECT_INTERVAL = 5
