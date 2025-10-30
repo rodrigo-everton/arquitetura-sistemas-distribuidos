@@ -169,6 +169,7 @@ def command_worker_redirect(workers_list, owner_master_ip):
                 s.connect((worker_ip, 5001))
                 
                 redirect_cmd = {
+                    "MASTER:": HOST,
                     "TASK": "REDIRECT",
                     "MASTER_REDIRECT": owner_master_ip
                 }
@@ -297,12 +298,16 @@ def receive_alive_worker(conn, addr):
             return
         try:
             uuid = data.get("WORKER_UUID")
+            master_origin = data.get("MASTER_ORIGIN")
         except (TypeError, AttributeError) as e:
             print(f"[ERROR] falha ao obter WORKER_UUID de {addr}: {e}")
         if uuid:
             with lock:
-                workers_controlled[uuid] = addr[0]
-            print(f"[WORKER] Registrado {uuid} de {addr[0]}")
+                if uuid == release_cmd and master_origin == release_cmd.get("MASTER"):
+                    workers_controlled[uuid] = addr[0]
+                    print(f"[WORKER] Registrado {uuid} de {addr[0]}")
+                else:
+                    conn.close()
             
             send_json(conn, QUERY_WORKER)
             
@@ -366,6 +371,7 @@ def monitor_saturation():
 
 def initiate_worker_release(master_name, workers_list):
     """Inicia protocolo COMMAND_RELEASE com master dono"""
+    global release_cmd
     try:
         with lock:
             master_ip = None
