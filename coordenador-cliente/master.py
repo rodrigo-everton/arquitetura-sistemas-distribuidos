@@ -31,6 +31,8 @@ ASK_FOR_WORKERS_RESPONSE_NEGATIVE = {"RESPONSE": "UNAVAILABLE"}
 lock = threading.Lock()
 masters_alive = {}
 workers_controlled = {}
+borrowed_workers = {}  # {uuid: {"master": name, "ip": ip, "timestamp": time}}
+task_queue = []
 errorCounter = 0
 
 def send_json(conn, obj):
@@ -120,10 +122,60 @@ def receive_master(c, addr):
                     print(f"[-] worker request send error {addr}: {e}")
             except Exception as e:
                 print(f"[-] worker request response error {addr}: {e}")
+        elif task == "COMMAND_RELEASE":
+            try:
+                master_name = data.get("MASTER_NAME", "unknown")
+                master_ip = data.get("MASTER_IP", "unknown")
+                workers_to_return = data.get("WORKERS", [])
+                print(f"\n[PROTOCOL] Recebido COMMAND_RELEASE do Master {master_name}")
+                #print(f"[PROTOCOL] Workers a devolver: {len(workers_to_return)}")
+                
+                response = {"RESPONSE": "RELEASE_ACK", 
+                            "MASTER": HOST,
+                            "WORKERS": workers_to_return}
+                send_json(c, response)
+                #print(f"[PROTOCOL] Enviado RELEASE_ACK para {master_name}\n")
+                
+                threading.Thread(
+                    target=process_worker_return,
+                    args=(workers_to_return, master_name, master_ip),
+                    daemon=True
+                ).start()
+            except Exception as e:
+                print(f"[-] Erro ao processar COMMAND_RELEASE: {e}")
     except Exception as e:
         print(f"[-] unexpected receive_master error {addr}: {e}")
     finally:
         c.close()
+def command_worker_redirect(workers_list, owner_master_ip):
+    """Envia comando REDIRECT aos workers para retornarem ao master original"""
+    time.sleep(1)
+    
+    for worker_uuid in workers_list:
+        try:
+            with lock:
+                if worker_uuid in workers_controlled:
+                    worker_ip = workers_controlled[worker_uuid]
+                else:
+                    continue
+            
+            # Conecta ao worker na porta de comando (5002)
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(5)
+                s.connect((worker_ip, 5001))
+                
+                redirect_cmd = {
+                    "TASK": "REDIRECT",
+                    "MASTER_REDIRECT": owner_master_ip
+                }
+                send_json(s, redirect_cmd)
+                print(f"[PROTOCOL] ⇒ Enviado REDIRECT ao worker {worker_uuid}")
+                print(f"[PROTOCOL]   Novo master: {owner_master_ip}")
+                
+        except socket.timeout:
+            print(f"[-] Timeout ao enviar REDIRECT para {worker_uuid}")
+        except Exception as e:
+            print(f"[-] Erro ao enviar REDIRECT para {worker_uuid}: {e}")
 
 def listen_masters():
     try:
@@ -166,7 +218,8 @@ def ask_for_workers():
                         wip = worker_info["WORKER_IP"]
                         with lock:
                             workers_controlled[uuid] = wip
-                        print(f"[OK] Recebi worker {uuid} de {name} ({wip})")
+                            borrowed_workers[uuid] = {"master": name, "ip": ip, "timestamp": time.time()}
+                        print(f"[OK] Recebi worker {uuid} de {name} ({wip}) - EMPRESTADO")
                         return True
                 except (KeyError, IndexError, TypeError) as e:
                     print(f"[ERROR] falha no parse do ask_for_workers {e}")
@@ -177,6 +230,20 @@ def ask_for_workers():
         except Exception as e:
             print(f"[ERROR] Erro inesperado com {name}: {e}")
     return False
+
+def process_worker_return(workers_list, owner_master_name, owner_master_ip):
+    """Remove workers emprestados após protocolo de devolução"""
+    time.sleep(1)
+    
+    command_worker_redirect(workers_list, owner_master_ip)
+    
+    with lock:
+        for worker_uuid in workers_list:
+            if worker_uuid in borrowed_workers:
+                del borrowed_workers[worker_uuid]
+            if worker_uuid in workers_controlled:
+                del workers_controlled[worker_uuid]
+                print(f"[PROTOCOL] Worker {worker_uuid} devolvido para {owner_master_name}")
 
 def manage_worker_connection(conn, addr, uuid):
     try:
@@ -189,6 +256,8 @@ def manage_worker_connection(conn, addr, uuid):
                     print(f"[!] Worker {uuid} desconectou")
                     break
                 try:
+                    with lock:
+                        task_queue.append({"uuid": uuid, "timestamp": time.time()})
                     send_json(conn, QUERY_WORKER)
                 except Exception as e:
                     print(f"[ERROR] Falha ao enviar QUERY para worker {uuid}: {e}")
@@ -207,6 +276,8 @@ def manage_worker_connection(conn, addr, uuid):
         with lock:
             if uuid in workers_controlled:
                 del workers_controlled[uuid]
+            if uuid in borrowed_workers:
+                del borrowed_workers[uuid]
 
 def receive_alive_worker(conn, addr):
     try:
@@ -256,6 +327,73 @@ def listen_workers():
     except Exception as e:
         print(f"[ERROR] erro inesperado na configuração da escuta de workers: {e}")
 
+def monitor_saturation():
+    """Monitora saturação de tasks e inicia protocolo de devolução se normalizar"""
+    while True:
+        time.sleep(5)
+        
+        with lock:
+            current_load = len(task_queue)
+            borrowed_count = len(borrowed_workers)
+            borrowed_list = list(borrowed_workers.keys()) if borrowed_workers else []
+            owner_master = None
+            if borrowed_workers:
+                owner_master = list(borrowed_workers.values())[0].get("master")
+        
+        print(f"[MONITOR] Carga: {current_load} tasks | Workers emprestados: {borrowed_count}")
+        
+        # Se carga volta ao normal (< 3 tasks) e há workers emprestados, devolve
+        if current_load < 3 and borrowed_count > 0 and owner_master:
+            print(f"\n[SATURATION] Carga normalizada, Iniciando devolução de {borrowed_count} workers...")
+            initiate_worker_release(owner_master, borrowed_list)
+            print()
+                
+        # Remove tasks antigas da fila (mais de 60 segundos)
+        with lock:
+            current_time = time.time()
+            task_queue[:] = [t for t in task_queue if current_time - t["timestamp"] < 60]
+
+def initiate_worker_release(master_name, workers_list):
+    """Inicia protocolo COMMAND_RELEASE com master dono"""
+    try:
+        with lock:
+            master_ip = None
+            for name, ip in masters_alive.items():
+                if name == master_name:
+                    master_ip = ip
+                    break
+        
+        if not master_ip:
+            print(f"[-] Master {master_name} não está vivo para receber devolução")
+            return
+        
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(5)
+            s.connect((master_ip, PORT))
+            
+            release_cmd = {
+                "TASK": "COMMAND_RELEASE",
+                "MASTER": HOST,
+                "WORKERS": workers_list
+            }
+            send_json(s, release_cmd)
+            print(f"[PROTOCOL] Enviado COMMAND_RELEASE para Master {master_name}")
+            print(f"[PROTOCOL] Workers: {workers_list}")
+            
+            ack = recv_json(s)
+            if ack and ack.get("RESPONSE") == "RELEASE_ACK":
+                print(f"[PROTOCOL] {master_name} confirmou RELEASE_ACK")
+                threading.Thread(
+                    target=process_worker_return,
+                    args=(workers_list, master_name, master_ip),
+                    daemon=True
+                ).start()
+    
+    except socket.timeout:
+        print(f"[-] Timeout ao enviar COMMAND_RELEASE para {master_name}")
+    except Exception as e:
+        print(f"[-] Erro ao iniciar COMMAND_RELEASE: {e}")
+
 def monitor_errors():
     global errorCounter
     while True:
@@ -271,6 +409,7 @@ def main():
     threading.Thread(target=listen_masters, daemon=True).start()
     threading.Thread(target=listen_workers, daemon=True).start()
     threading.Thread(target=monitor_errors, daemon=True).start()
+    threading.Thread(target=monitor_saturation, daemon=True).start()
     while True:
         time.sleep(1)
 
