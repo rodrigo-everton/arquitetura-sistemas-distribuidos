@@ -75,6 +75,7 @@ if __name__ == '__main__':
                                         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                                             s.settimeout(2)
                                             servers = MASTERS["servers"]
+                                            ip = 0
                                             for server in servers:
                                                 if server["id"] == target:
                                                     ip = server.get("ip")
