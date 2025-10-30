@@ -3,8 +3,9 @@ import threading
 import json
 import time
 import random
+import statistics
 
-HOST = "192.168.15.4"
+HOST = "10.62.217.208"
 PORT = 5000
 
 MASTERS = {
@@ -28,12 +29,15 @@ RESPOND_ALIVE_MASTER = {"TASK": "HEARTBEAT", "RESPONSE": "ALIVE"}
 ASK_FOR_WORKERS = {"TASK": "WORKER_REQUEST"}
 ASK_FOR_WORKERS_RESPONSE_NEGATIVE = {"RESPONSE": "UNAVAILABLE"}
 
+THRESHOLD = 0.0005
+REQUEST_COOLDOWN = 10
+
 lock = threading.Lock()
 masters_alive = {}
 workers_controlled = {}
 borrowed_workers = {}  # {uuid: {"master": name, "ip": ip, "timestamp": time}}
 task_queue = []
-errorCounter = 0
+latency_times = []
 
 def send_json(conn, obj):
     try:
@@ -159,7 +163,7 @@ def command_worker_redirect(workers_list, owner_master_ip):
                 else:
                     continue
             
-            # Conecta ao worker na porta de comando (5002)
+            # Conecta ao worker na porta de comando (5001)
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.settimeout(5)
                 s.connect((worker_ip, 5001))
@@ -169,8 +173,8 @@ def command_worker_redirect(workers_list, owner_master_ip):
                     "MASTER_REDIRECT": owner_master_ip
                 }
                 send_json(s, redirect_cmd)
-                print(f"[PROTOCOL] ⇒ Enviado REDIRECT ao worker {worker_uuid}")
-                print(f"[PROTOCOL]   Novo master: {owner_master_ip}")
+                print(f"[PROTOCOL] Enviado REDIRECT ao worker {worker_uuid}")
+                print(f"[PROTOCOL] Novo master: {owner_master_ip}")
                 
         except socket.timeout:
             print(f"[-] Timeout ao enviar REDIRECT para {worker_uuid}")
@@ -203,6 +207,7 @@ def ask_for_workers():
         alive_list = list(masters_alive.items())
     for name, ip in alive_list:
         try:
+            print("tentando pedir workers...")
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.settimeout(3)
                 s.connect((ip, PORT))
@@ -246,6 +251,7 @@ def process_worker_return(workers_list, owner_master_name, owner_master_ip):
                 print(f"[PROTOCOL] Worker {worker_uuid} devolvido para {owner_master_name}")
 
 def manage_worker_connection(conn, addr, uuid):
+    global latency
     try:
         conn.settimeout(30)
         
@@ -258,7 +264,11 @@ def manage_worker_connection(conn, addr, uuid):
                 try:
                     with lock:
                         task_queue.append({"uuid": uuid, "timestamp": time.time()})
+                    t0 = time.time()
                     send_json(conn, QUERY_WORKER)
+                    t1 = time.time()
+                    latency = (t1 - t0)
+                    latency_times.append(latency)
                 except Exception as e:
                     print(f"[ERROR] Falha ao enviar QUERY para worker {uuid}: {e}")
                     break
@@ -329,6 +339,7 @@ def listen_workers():
 
 def monitor_saturation():
     """Monitora saturação de tasks e inicia protocolo de devolução se normalizar"""
+
     while True:
         time.sleep(5)
         
@@ -343,7 +354,7 @@ def monitor_saturation():
         print(f"[MONITOR] Carga: {current_load} tasks | Workers emprestados: {borrowed_count}")
         
         # Se carga volta ao normal (< 3 tasks) e há workers emprestados, devolve
-        if current_load < 3 and borrowed_count > 0 and owner_master:
+        if statistics.mean(latency_times) < THRESHOLD and borrowed_count > 0 and owner_master: #current_load < X
             print(f"\n[SATURATION] Carga normalizada, Iniciando devolução de {borrowed_count} workers...")
             initiate_worker_release(owner_master, borrowed_list)
             print()
@@ -395,21 +406,21 @@ def initiate_worker_release(master_name, workers_list):
         print(f"[-] Erro ao iniciar COMMAND_RELEASE: {e}")
 
 def monitor_errors():
-    global errorCounter
     while True:
-        time.sleep(10)
-        if errorCounter >= 10:
-            print("[!] Muitos erros — pedindo workers adicionais...")
-            ask_for_workers()
-            errorCounter = 0
+        time.sleep(5)
+        global last_request_time
+        now = time.time()
+        if statistics.mean(latency_times) >= THRESHOLD:
+          ask_for_workers()
+          last_request_time = now
 
 def main():
     print("[SYSTEM] Master iniciando...")
     threading.Thread(target=send_alive_master, daemon=True).start()
     threading.Thread(target=listen_masters, daemon=True).start()
     threading.Thread(target=listen_workers, daemon=True).start()
-    threading.Thread(target=monitor_errors, daemon=True).start()
     threading.Thread(target=monitor_saturation, daemon=True).start()
+    threading.Thread(target=monitor_errors, daemon=True).start()
     while True:
         time.sleep(1)
 

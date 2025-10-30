@@ -1,10 +1,10 @@
 #THRESHOLD UTILIZANDO LATENCIA DAS RESPOSTAS DOS WORKERS
 
 """
-THRESHOLD = 0.5
+THRESHOLD = 1.5
 REQUEST_COOLDOWN = 10
 
-t0 = time.time()
+    t0 = time.time()
     send_json(c, QUERY_WORKER)
     raw = c.recv(4096)
     t1 = time.time()
