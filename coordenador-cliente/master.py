@@ -4,8 +4,15 @@ import json
 import time
 import random
 import statistics
+import logging
 
-HOST = "10.62.217.208"
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    datefmt='%H:%M:%S'
+)
+
+HOST = "192.168.15.5"
 PORT = 5000
 
 MASTERS = {
@@ -38,13 +45,16 @@ workers_controlled = {}
 borrowed_workers = {}  # {uuid: {"master": name, "ip": ip, "timestamp": time}}
 task_queue = []
 latency_times = []
+release_cmd = {}
+expected_workers = {}
+# last_request_time = 0 
 
 def send_json(conn, obj):
     try:
         data = json.dumps(obj).encode("utf-8") + b"\n"
         conn.sendall(data)
     except Exception as e:
-        print(f"[ERROR] send json error: {e}")
+        logging.error(f"[ERROR] send json error: {e}")
 
 def recv_json(conn):
     try:
@@ -56,7 +66,7 @@ def recv_json(conn):
         except Exception:
             return None
     except Exception as e:
-        print(f"[ERROR] recv json error: {e}")
+        logging.error(f"[ERROR] recv json error: {e}")
         return None
 
 def send_alive_master():
@@ -71,23 +81,24 @@ def send_alive_master():
                     s.settimeout(2)
                     s.connect((ip, PORT))
                     send_json(s, SEND_ALIVE_MASTER)
+                    logging.info(f"[PAYLOAD] {SEND_ALIVE_MASTER}")
                     data = recv_json(s)
                     if data and data.get("RESPONSE") == "ALIVE":
                         with lock:
                             masters_alive[name] = ip
-                        print(f"[+] Master '{name}' ({ip}) está vivo.")
+                        logging.info(f"[+] Master '{name}' ({ip}) está vivo.")
             except socket.timeout:
                 with lock:
                     if name in masters_alive:
                         del masters_alive[name]
-                print(f"[-] Timeout ao contatar '{name}' ({ip}).")
+                logging.warning(f"[-] Timeout ao contatar '{name}' ({ip}).")
             except socket.error as e:
                 with lock:
                     if name in masters_alive:
                         del masters_alive[name]
-                print(f"[-] Falha ao contatar '{name}' ({ip}): {e}")
+                logging.error(f"[-] Falha ao contatar '{name}' ({ip}): {e}")
             except Exception as e:
-                print(f"[-] Erro inesperado em send_alive_master: {e}")
+                logging.error(f"[-] Erro inesperado em send_alive_master: {e}")
             time.sleep(1)
         time.sleep(5)
 
@@ -100,14 +111,15 @@ def receive_master(c, addr):
         try:
             task = data.get("TASK")
         except (TypeError, AttributeError) as e:
-            print(f"[-] falha ao obter TASK de {addr}: {e}")
+            logging.error(f"[-] falha ao obter TASK de {addr}: {e}")
             c.close()
             return
         if task == "HEARTBEAT":
             try:
                 send_json(c, RESPOND_ALIVE_MASTER)
+                logging.info(f"[PAYLOAD] {RESPOND_ALIVE_MASTER}")
             except Exception as e:
-                print(f"[-] heartbeat response error {addr}: {e}")
+                logging.error(f"[-] heartbeat response error {addr}: {e}")
         elif task == "WORKER_REQUEST":
             try:
                 with lock:
@@ -116,28 +128,29 @@ def receive_master(c, addr):
                         response = {
                             "RESPONSE": "AVAILABLE",
                             "WORKERS": [{"WORKER_UUID": uuid, "WORKER_IP": ip}],
-                            "MSG":"to recebendo"
                         }
                     else:
                         response = ASK_FOR_WORKERS_RESPONSE_NEGATIVE
                 try:
                     send_json(c, response)
+                    logging.info(f"[PAYLOAD] {response}")
                 except Exception as e:
-                    print(f"[-] worker request send error {addr}: {e}")
+                    logging.error(f"[-] worker request send error {addr}: {e}")
             except Exception as e:
-                print(f"[-] worker request response error {addr}: {e}")
+                logging.error(f"[-] worker request response error {addr}: {e}")
         elif task == "COMMAND_RELEASE":
             try:
                 master_name = data.get("MASTER_NAME", "unknown")
                 master_ip = data.get("MASTER_IP", "unknown")
                 workers_to_return = data.get("WORKERS", [])
-                print(f"\n[PROTOCOL] Recebido COMMAND_RELEASE do Master {master_name}")
+                logging.info(f"\n[PROTOCOL] Recebido COMMAND_RELEASE do Master {master_name}")
                 #print(f"[PROTOCOL] Workers a devolver: {len(workers_to_return)}")
                 
                 response = {"RESPONSE": "RELEASE_ACK", 
                             "MASTER": HOST,
                             "WORKERS": workers_to_return}
                 send_json(c, response)
+                logging.info(f"[PAYLOAD] {response}")
                 #print(f"[PROTOCOL] Enviado RELEASE_ACK para {master_name}\n")
                 
                 threading.Thread(
@@ -146,9 +159,9 @@ def receive_master(c, addr):
                     daemon=True
                 ).start()
             except Exception as e:
-                print(f"[-] Erro ao processar COMMAND_RELEASE: {e}")
+                logging.error(f"[-] Erro ao processar COMMAND_RELEASE: {e}")
     except Exception as e:
-        print(f"[-] unexpected receive_master error {addr}: {e}")
+        logging.error(f"[-] unexpected receive_master error {addr}: {e}")
     finally:
         c.close()
 def command_worker_redirect(workers_list, owner_master_ip):
@@ -174,49 +187,51 @@ def command_worker_redirect(workers_list, owner_master_ip):
                     "MASTER_REDIRECT": owner_master_ip
                 }
                 send_json(s, redirect_cmd)
-                print(f"[PROTOCOL] Enviado REDIRECT ao worker {worker_uuid}")
-                print(f"[PROTOCOL] Novo master: {owner_master_ip}")
-                
+                logging.info(f"[PAYLOAD] {redirect_cmd}")
+                logging.info(f"[PROTOCOL] Enviado REDIRECT ao worker {worker_uuid}")
+                logging.info(f"[PROTOCOL] Novo master: {owner_master_ip}")
+
         except socket.timeout:
-            print(f"[-] Timeout ao enviar REDIRECT para {worker_uuid}")
+            logging.warning(f"[-] Timeout ao enviar REDIRECT para {worker_uuid}")
         except Exception as e:
-            print(f"[-] Erro ao enviar REDIRECT para {worker_uuid}: {e}")
+            logging.error(f"[-] Erro ao enviar REDIRECT para {worker_uuid}: {e}")
 
 def listen_masters():
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         s.bind((HOST, PORT))
-        s.listen()
-        print(f"[MASTER] Escutando masters em {HOST}:{PORT}")
+        s.listen()  #timeout aqui??
+        logging.info(f"[MASTER] Escutando masters em {HOST}:{PORT}")
         while True:
             try:
                 c, addr = s.accept()
                 threading.Thread(target=receive_master, args=(c, addr), daemon=True).start()
 
             except socket.error as e:
-                print(f"[ERROR] master accept socket error: {e}")
+                logging.error(f"[ERROR] master accept socket error: {e}")
             except Exception as e:
-                print(f"[ERROR] unexpected thread start error: {e}")
+                logging.error(f"[ERROR] unexpected thread start error: {e}")
     except socket.error as e:
-        print(f"[ERROR] master listening socket error: {e}")
+        logging.error(f"[ERROR] master listening socket error: {e}")
     except Exception as e:
-        print(f"[ERROR] unexpected listen_masters setup error: {e}")
+        logging.error(f"[ERROR] unexpected listen_masters setup error: {e}")
 
 def ask_for_workers():
     with lock:
         alive_list = list(masters_alive.items())
     for name, ip in alive_list:
         try:
-            print("tentando pedir workers...")
+            logging.info("tentando pedir workers...")
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.settimeout(3)
                 s.connect((ip, PORT))
-                print(f"[ASK] Pedindo workers para {name} ({ip})...")
+                logging.info(f"[ASK] Pedindo workers para {name} ({ip})...")
                 send_json(s, ASK_FOR_WORKERS)
+                logging.info(f"[PAYLOAD] {ASK_FOR_WORKERS}")
                 data = recv_json(s)
                 if not data:
-                    continue
+                    continue   #falta de except aqui???
                 try:
                     if data.get("RESPONSE") == "AVAILABLE":
                         worker_info = data["WORKERS"][0]
@@ -225,16 +240,16 @@ def ask_for_workers():
                         with lock:
                             workers_controlled[uuid] = wip
                             borrowed_workers[uuid] = {"master": name, "ip": ip, "timestamp": time.time()}
-                        print(f"[OK] Recebi worker {uuid} de {name} ({wip}) - EMPRESTADO")
+                        logging.info(f"[OK] Recebi worker {uuid} de {name} ({wip}) - EMPRESTADO")
                         return True
                 except (KeyError, IndexError, TypeError) as e:
-                    print(f"[ERROR] falha no parse do ask_for_workers {e}")
+                    logging.error(f"[ERROR] falha no parse do ask_for_workers {e}")
         except socket.timeout:
-            print(f"[TIMEOUT] Timeout ao pedir worker de {name}: timeout")
+            logging.warning(f"[TIMEOUT] Timeout ao pedir worker de {name}: timeout")
         except socket.error as e:
-            print(f"[ERROR] Falha ao pedir worker de {name}: {e}")
+            logging.error(f"[ERROR] Falha ao pedir worker de {name}: {e}")
         except Exception as e:
-            print(f"[ERROR] Erro inesperado com {name}: {e}")
+            logging.error(f"[ERROR] Erro inesperado com {name}: {e}")
     return False
 
 def process_worker_return(workers_list, owner_master_name, owner_master_ip):
@@ -249,7 +264,7 @@ def process_worker_return(workers_list, owner_master_name, owner_master_ip):
                 del borrowed_workers[worker_uuid]
             if worker_uuid in workers_controlled:
                 del workers_controlled[worker_uuid]
-                print(f"[PROTOCOL] Worker {worker_uuid} devolvido para {owner_master_name}")
+                logging.info(f"[PROTOCOL] Worker {worker_uuid} devolvido para {owner_master_name}")
 
 def manage_worker_connection(conn, addr, uuid):
     global latency
@@ -260,28 +275,30 @@ def manage_worker_connection(conn, addr, uuid):
             try:
                 data = recv_json(conn)
                 if not data:
-                    print(f"[!] Worker {uuid} desconectou")
+                    logging.warning(f"[!] Worker {uuid} desconectou")
                     break
                 try:
                     with lock:
                         task_queue.append({"uuid": uuid, "timestamp": time.time()})
                     t0 = time.time()
                     send_json(conn, QUERY_WORKER)
+                    logging.info(f"[PAYLOAD] {QUERY_WORKER}")
                     t1 = time.time()
                     latency = (t1 - t0)
-                    latency_times.append(latency)
+                    with lock:
+                        latency_times.append(latency)
                 except Exception as e:
-                    print(f"[ERROR] Falha ao enviar QUERY para worker {uuid}: {e}")
+                    logging.error(f"[ERROR] Falha ao enviar QUERY para worker {uuid}: {e}")
                     break
             
             except socket.timeout:
-                print(f"[TIMEOUT] Worker {uuid} não respondeu")
+                logging.warning(f"[TIMEOUT] Worker {uuid} não respondeu")
                 break
             except Exception as e:
-                print(f"[ERROR] Worker {uuid}: {e}")
+                logging.error(f"[ERROR] Worker {uuid}: {e}")
                 break
     except Exception as e:
-        print(f"[ERROR] erro no setup da conexão com o worker {uuid}: {e}")
+        logging.error(f"[ERROR] erro no setup da conexão com o worker {uuid}: {e}")
     finally:
         conn.close()
         with lock:
@@ -300,16 +317,17 @@ def receive_alive_worker(conn, addr):
             uuid = data.get("WORKER_UUID")
             master_origin = data.get("MASTER_ORIGIN")
         except (TypeError, AttributeError) as e:
-            print(f"[ERROR] falha ao obter WORKER_UUID de {addr}: {e}")
+            logging.error(f"[ERROR] falha ao obter WORKER_UUID de {addr}: {e}")
         if uuid:
             with lock:
-                if uuid == release_cmd and master_origin == release_cmd.get("MASTER"):
-                    workers_controlled[uuid] = addr[0]
-                    print(f"[WORKER] Registrado {uuid} de {addr[0]}")
-                else:
-                    conn.close()
+                # if uuid == release_cmd and master_origin == release_cmd.get("MASTER"):   #release_cmd é um dicionário, não é uuid (e é variavel local??)
+                workers_controlled[uuid] = addr[0]
+                logging.info(f"[WORKER] Registrado {uuid} de {addr[0]}")
+                # else:
+                #     logging.warning(f"[WORKER] Registro inválido de worker {uuid} de {addr[0]}")
             
             send_json(conn, QUERY_WORKER)
+            logging.info(f"[PAYLOAD] {QUERY_WORKER}")
             
             threading.Thread(
                 target=manage_worker_connection,
@@ -319,7 +337,7 @@ def receive_alive_worker(conn, addr):
         else:
             conn.close()
     except Exception as e:
-        print(f"[ERROR] Falha ao registrar worker de {addr}: {e}")
+        logging.error(f"[ERROR] Falha ao registrar worker de {addr}: {e}")
         pass
 
 def listen_workers():
@@ -328,19 +346,19 @@ def listen_workers():
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         s.bind((HOST, PORT + 1))
         s.listen()
-        print(f"[WORKER] Escutando workers em {HOST}:{PORT+1}")
+        logging.info(f"[WORKER] Escutando workers em {HOST}:{PORT+1}")
         while True:
             try:
                 c, addr = s.accept()
                 threading.Thread(target=receive_alive_worker, args=(c, addr), daemon=True).start()
             except socket.error as e:
-                print(f"[ERROR] erro de socket accept na escuta de workers: {e}")
+                logging.error(f"[ERROR] erro de socket accept na escuta de workers: {e}")
             except Exception as e:
-                print(f"[ERROR] erro inesperado no start da thread de tasks para workers: {e}")
+                logging.error(f"[ERROR] erro inesperado no start da thread de tasks para workers: {e}")
     except socket.error as e:
-        print(f"[ERROR] erro de socket na escuta de workers: {e}")
+        logging.error(f"[ERROR] erro de socket na escuta de workers: {e}")
     except Exception as e:
-        print(f"[ERROR] erro inesperado na configuração da escuta de workers: {e}")
+        logging.error(f"[ERROR] erro inesperado na configuração da escuta de workers: {e}")
 
 def monitor_saturation():
     """Monitora saturação de tasks e inicia protocolo de devolução se normalizar"""
@@ -355,19 +373,18 @@ def monitor_saturation():
             owner_master = None
             if borrowed_workers:
                 owner_master = list(borrowed_workers.values())[0].get("master")
-        
-        print(f"[MONITOR] Carga: {current_load} tasks | Workers emprestados: {borrowed_count}")
-        
-        # Se carga volta ao normal (< 3 tasks) e há workers emprestados, devolve
-        if statistics.mean(latency_times) < THRESHOLD and borrowed_count > 0 and owner_master: #current_load < X
-            print(f"\n[SATURATION] Carga normalizada, Iniciando devolução de {borrowed_count} workers...")
+
+        logging.info(f"[MONITOR] Carga: {current_load} tasks | Workers emprestados: {borrowed_count}")
+
+        if len(latency_times) > 1 and statistics.mean(latency_times) < THRESHOLD and borrowed_count > 0 and owner_master:
+            logging.info(f"\n[SATURATION] Carga normalizada, Iniciando devolução de {borrowed_count} workers...")
             initiate_worker_release(owner_master, borrowed_list)
-            print()
+            print()   #faltando log de confirmação de devolução
                 
-        # Remove tasks antigas da fila (mais de 60 segundos)
         with lock:
             current_time = time.time()
             task_queue[:] = [t for t in task_queue if current_time - t["timestamp"] < 60]
+
 
 def initiate_worker_release(master_name, workers_list):
     """Inicia protocolo COMMAND_RELEASE com master dono"""
@@ -381,25 +398,27 @@ def initiate_worker_release(master_name, workers_list):
                     break
         
         if not master_ip:
-            print(f"[-] Master {master_name} não está vivo para receber devolução")
+            logging.warning(f"[-] Master {master_name} não está vivo para receber devolução")
             return
         
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.settimeout(5)
             s.connect((master_ip, PORT))
-            
+
+            global release_cmd
             release_cmd = {
                 "TASK": "COMMAND_RELEASE",
                 "MASTER": HOST,
                 "WORKERS": workers_list
             }
             send_json(s, release_cmd)
-            print(f"[PROTOCOL] Enviado COMMAND_RELEASE para Master {master_name}")
-            print(f"[PROTOCOL] Workers: {workers_list}")
-            
+            logging.info(f"[PAYLOAD] {release_cmd}")
+            logging.info(f"[PROTOCOL] Enviado COMMAND_RELEASE para Master {master_name}")
+            logging.info(f"[PROTOCOL] Workers: {workers_list}")
+
             ack = recv_json(s)
             if ack and ack.get("RESPONSE") == "RELEASE_ACK":
-                print(f"[PROTOCOL] {master_name} confirmou RELEASE_ACK")
+                logging.info(f"[PROTOCOL] {master_name} confirmou RELEASE_ACK")
                 threading.Thread(
                     target=process_worker_return,
                     args=(workers_list, master_name, master_ip),
@@ -407,21 +426,22 @@ def initiate_worker_release(master_name, workers_list):
                 ).start()
     
     except socket.timeout:
-        print(f"[-] Timeout ao enviar COMMAND_RELEASE para {master_name}")
+        logging.warning(f"[-] Timeout ao enviar COMMAND_RELEASE para {master_name}")
     except Exception as e:
-        print(f"[-] Erro ao iniciar COMMAND_RELEASE: {e}")
+        logging.error(f"[-] Erro ao iniciar COMMAND_RELEASE: {e}")
 
 def monitor_errors():
     while True:
         time.sleep(5)
-        global last_request_time
-        now = time.time()
-        if statistics.mean(latency_times) >= THRESHOLD:
-          ask_for_workers()
-          last_request_time = now
+        with lock:
+            if len(latency_times) > 1:
+                avg_latency = statistics.mean(latency_times)
+        
+        if len(latency_times) > 1 and avg_latency >= THRESHOLD:
+            ask_for_workers()
 
 def main():
-    print("[SYSTEM] Master iniciando...")
+    logging.info("[SYSTEM] Master iniciando...")
     threading.Thread(target=send_alive_master, daemon=True).start()
     threading.Thread(target=listen_masters, daemon=True).start()
     threading.Thread(target=listen_workers, daemon=True).start()
