@@ -220,36 +220,45 @@ def listen_masters():
 def ask_for_workers():
     with lock:
         alive_list = list(masters_alive.items())
+    
     for name, ip in alive_list:
         try:
-            logging.info("tentando pedir workers...")
+            logging.info(f"[ASK] Pedindo workers para {name} ({ip})...")
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.settimeout(3)
                 s.connect((ip, PORT))
-                logging.info(f"[ASK] Pedindo workers para {name} ({ip})...")
                 send_json(s, ASK_FOR_WORKERS)
                 logging.info(f"[PAYLOAD] {ASK_FOR_WORKERS}")
+                
                 data = recv_json(s)
                 if not data:
-                    continue   #falta de except aqui???
-                try:
-                    if data.get("RESPONSE") == "AVAILABLE":
-                        worker_info = data["WORKERS"][0]
-                        uuid = worker_info["WORKER_UUID"]
-                        wip = worker_info["WORKER_IP"]
-                        with lock:
-                            workers_controlled[uuid] = wip
-                            borrowed_workers[uuid] = {"master": name, "ip": ip, "timestamp": time.time()}
-                        logging.info(f"[OK] Recebi worker {uuid} de {name} ({wip}) - EMPRESTADO")
-                        return True
-                except (KeyError, IndexError, TypeError) as e:
-                    logging.error(f"[ERROR] falha no parse do ask_for_workers {e}")
+                    continue
+                
+                if data.get("RESPONSE") == "AVAILABLE":
+                    worker_info = data["WORKERS"][0]
+                    uuid = worker_info["WORKER_UUID"]
+                    wip = worker_info["WORKER_IP"]
+                    
+                    with lock:
+                        # MARCA COMO ESPERADO ANTES DO WORKER CONECTAR
+                        expected_workers[uuid] = {
+                            "master": name,
+                            "ip": ip
+                        }
+                    
+                    logging.info(
+                        f"[OK] Worker {uuid} será emprestado por {name} "
+                        f"(aguardando conexão de {wip})"
+                    )
+                    return True
+                    
         except socket.timeout:
-            logging.warning(f"[TIMEOUT] Timeout ao pedir worker de {name}: timeout")
+            logging.warning(f"[TIMEOUT] Timeout ao pedir worker de {name}")
         except socket.error as e:
             logging.error(f"[ERROR] Falha ao pedir worker de {name}: {e}")
         except Exception as e:
             logging.error(f"[ERROR] Erro inesperado com {name}: {e}")
+    
     return False
 
 def process_worker_return(workers_list, owner_master_name, owner_master_ip):
@@ -313,32 +322,68 @@ def receive_alive_worker(conn, addr):
         if not data:
             conn.close()
             return
-        try:
-            uuid = data.get("WORKER_UUID")
-            master_origin = data.get("MASTER_ORIGIN")
-        except (TypeError, AttributeError) as e:
-            logging.error(f"[ERROR] falha ao obter WORKER_UUID de {addr}: {e}")
-        if uuid:
-            with lock:
-                # if uuid == release_cmd and master_origin == release_cmd.get("MASTER"):   #release_cmd é um dicionário, não é uuid (e é variavel local??)
-                workers_controlled[uuid] = addr[0]
-                logging.info(f"[WORKER] Registrado {uuid} de {addr[0]}")
-                # else:
-                #     logging.warning(f"[WORKER] Registro inválido de worker {uuid} de {addr[0]}")
-            
-            send_json(conn, QUERY_WORKER)
-            logging.info(f"[PAYLOAD] {QUERY_WORKER}")
-            
-            threading.Thread(
-                target=manage_worker_connection,
-                args=(conn, addr, uuid),
-                daemon=True
-            ).start()
-        else:
+        
+        uuid = data.get("WORKER_UUID")
+        master_origin = data.get("MASTER_ORIGIN")
+        
+        if not uuid:
+            logging.error(f"[ERROR] Worker sem UUID de {addr}")
             conn.close()
+            return
+        
+        # LÓGICA CORRETA DE VALIDAÇÃO
+        with lock:
+            # Caso 1: Worker próprio (conectando pela primeira vez ou reconectando)
+            is_own_worker = (master_origin == HOST)
+            
+            # Caso 2: Worker emprestado esperado
+            is_expected_borrowed = (uuid in expected_workers)
+            
+            # Caso 3: Worker já controlado (reconexão)
+            is_reconnecting = (uuid in workers_controlled)
+            
+            # Aceita se for qualquer um dos casos acima
+            if is_own_worker or is_expected_borrowed or is_reconnecting:
+                workers_controlled[uuid] = addr[0]
+                
+                # Se era esperado, marca como emprestado
+                if is_expected_borrowed:
+                    expected_info = expected_workers[uuid]
+                    borrowed_workers[uuid] = {
+                        "master": expected_info["master"],
+                        "ip": expected_info["ip"],
+                        "timestamp": time.time()
+                    }
+                    del expected_workers[uuid]
+                    logging.info(f"[WORKER] Worker emprestado {uuid} conectado de {addr[0]}")
+                else:
+                    logging.info(f"[WORKER] Worker próprio {uuid} registrado de {addr[0]}")
+            else:
+                # Rejeita workers não autorizados
+                logging.warning(
+                    f"[REJECT] Worker {uuid} rejeitado "
+                    f"(origin: {master_origin}, não esperado)"
+                )
+                conn.close()
+                return
+        
+        # Envia primeira query
+        send_json(conn, QUERY_WORKER)
+        logging.info(f"[PAYLOAD] {QUERY_WORKER}")
+        
+        # Inicia gerenciamento do worker
+        threading.Thread(
+            target=manage_worker_connection,
+            args=(conn, addr, uuid),
+            daemon=True
+        ).start()
+        
     except Exception as e:
         logging.error(f"[ERROR] Falha ao registrar worker de {addr}: {e}")
-        pass
+        try:
+            conn.close()
+        except:
+            pass
 
 def listen_workers():
     try:
