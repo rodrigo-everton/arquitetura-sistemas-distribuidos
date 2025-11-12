@@ -1,0 +1,7 @@
+18:03:11 [INFO] config carregada: C:\Users\Oraex\Downloads\arquitetura-sistemas-distribuidos\projeto\config.json
+18:03:11 [INFO] Master em 10.62.217.212:5000 | Worker port 5001
+18:03:11 [INFO] Peers: ['10.62.217.199', '10.62.217.16', '10.62.217.209', '10.62.217.203']
+18:03:11 [INFO] Threshold fila=10 | HB interval=3s
+18:03:11 [INFO] [SYSTEM] Master iniciando...
+18:03:11 [ERROR] [listen_masters] [WinError 10049] O endereço solicitado não é válido no contexto
+18:03:11 [ERROR] [listen_workers] [WinError 10049] O endereço solicitado não é válido no contexto
