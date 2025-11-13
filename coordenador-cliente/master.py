@@ -12,7 +12,7 @@ logging.basicConfig(
     datefmt='%H:%M:%S'
 )
 
-HOST = "192.168.15.5"
+HOST = "192.168.15.4"
 PORT = 5000
 
 MASTERS = {
@@ -36,6 +36,8 @@ RESPOND_ALIVE_MASTER = {"TASK": "HEARTBEAT", "RESPONSE": "ALIVE"}
 ASK_FOR_WORKERS = {"TASK": "WORKER_REQUEST"}
 ASK_FOR_WORKERS_RESPONSE_NEGATIVE = {"RESPONSE": "UNAVAILABLE"}
 
+# Novo threshold baseado em tasks, conforme especificado
+TASK_THRESHOLD = 10
 THRESHOLD = 0.0005
 REQUEST_COOLDOWN = 10
 
@@ -140,32 +142,48 @@ def receive_master(c, addr):
                 logging.error(f"[-] worker request response error {addr}: {e}")
         elif task == "COMMAND_RELEASE":
             try:
-                master_name = data.get("MASTER_NAME", "unknown")
-                master_ip = data.get("MASTER_IP", "unknown")
-                workers_to_return = data.get("WORKERS", [])
-                logging.info(f"\n[PROTOCOL] Recebido COMMAND_RELEASE do Master {master_name}")
-                #print(f"[PROTOCOL] Workers a devolver: {len(workers_to_return)}")
+                # Payload da SPRINT 4.1
+                master_ip = data.get("SERVER_UUID", "unknown")
+                workers_to_return = data.get("WORKERS_UUID", [])
+                logging.info(f"\n[PROTOCOL] Recebido COMMAND_RELEASE do Master {master_ip}")
                 
-                response = {"RESPONSE": "RELEASE_ACK", 
-                            "MASTER": HOST,
-                            "WORKERS": workers_to_return}
+                # |5.2| Servidor B → Servidor A – Confirmação de Recebimento
+                response = {
+                    "SERVER_UUID": HOST,
+                    "RESPONSE": "RELEASE_ACK", 
+                    "WORKERS_UUID": workers_to_return
+                }
                 send_json(c, response)
                 logging.info(f"[PAYLOAD] {response}")
-                #print(f"[PROTOCOL] Enviado RELEASE_ACK para {master_name}\n")
                 
+                # Inicia uma thread para aguardar o retorno dos workers e enviar a confirmação final
                 threading.Thread(
-                    target=process_worker_return,
-                    args=(workers_to_return, master_name, master_ip),
+                    target=process_worker_reconnection,
+                    args=(workers_to_return, master_ip),
                     daemon=True
                 ).start()
             except Exception as e:
                 logging.error(f"[-] Erro ao processar COMMAND_RELEASE: {e}")
+        
+        # |5.5| Lógica para receber a confirmação final do retorno
+        elif task == "RELEASE_COMPLETED":
+            master_ip = data.get("SERVER_UUID", "unknown")
+            returned_workers = data.get("WORKERS_UUID", [])
+            logging.info(f"[PROTOCOL] Recebido RELEASE_COMPLETED de {master_ip} para workers: {returned_workers}")
+            # Limpa os workers da lista de emprestados
+            with lock:
+                for worker_uuid in returned_workers:
+                    if worker_uuid in borrowed_workers:
+                        del borrowed_workers[worker_uuid]
+                        logging.info(f"[PROTOCOL] Worker {worker_uuid} oficialmente devolvido.")
+
     except Exception as e:
         logging.error(f"[-] unexpected receive_master error {addr}: {e}")
     finally:
         c.close()
-def command_worker_redirect(workers_list, owner_master_ip):
-    """Envia comando REDIRECT aos workers para retornarem ao master original"""
+
+def command_worker_return(workers_list, owner_master_ip):
+    """|5.3| Envia comando RETURN aos workers para retornarem ao master original"""
     time.sleep(1)
     
     for worker_uuid in workers_list:
@@ -176,25 +194,28 @@ def command_worker_redirect(workers_list, owner_master_ip):
                 else:
                     continue
             
-            # Conecta ao worker na porta de comando (5001)
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.settimeout(5)
-                s.connect((worker_ip, 5001))
+                # A porta de comando do worker é a porta principal + 1
+                s.connect((worker_ip, PORT + 1))
                 
-                redirect_cmd = {
-                    "MASTER:": HOST,
-                    "TASK": "REDIRECT",
-                    "MASTER_REDIRECT": owner_master_ip
+                # Payload |5.3|
+                return_cmd = {
+                    "TASK": "RETURN",
+                    "SERVER_RETURN": {
+                        "ip": owner_master_ip,
+                        "port": PORT + 1
+                    }
                 }
-                send_json(s, redirect_cmd)
-                logging.info(f"[PAYLOAD] {redirect_cmd}")
-                logging.info(f"[PROTOCOL] Enviado REDIRECT ao worker {worker_uuid}")
+                send_json(s, return_cmd)
+                logging.info(f"[PAYLOAD] {return_cmd}")
+                logging.info(f"[PROTOCOL] Enviado RETURN ao worker {worker_uuid}")
                 logging.info(f"[PROTOCOL] Novo master: {owner_master_ip}")
 
         except socket.timeout:
-            logging.warning(f"[-] Timeout ao enviar REDIRECT para {worker_uuid}")
+            logging.warning(f"[-] Timeout ao enviar RETURN para {worker_uuid}")
         except Exception as e:
-            logging.error(f"[-] Erro ao enviar REDIRECT para {worker_uuid}: {e}")
+            logging.error(f"[-] Erro ao enviar RETURN para {worker_uuid}: {e}")
 
 def listen_masters():
     try:
@@ -262,21 +283,59 @@ def ask_for_workers():
     return False
 
 def process_worker_return(workers_list, owner_master_name, owner_master_ip):
-    """Remove workers emprestados após protocolo de devolução"""
+    """Remove workers emprestados e envia comando de retorno"""
     time.sleep(1)
     
-    command_worker_redirect(workers_list, owner_master_ip)
+    # Envia o comando de retorno para os workers
+    command_worker_return(workers_list, owner_master_ip)
     
     with lock:
         for worker_uuid in workers_list:
-            if worker_uuid in borrowed_workers:
-                del borrowed_workers[worker_uuid]
+            # A remoção final de `borrowed_workers` agora acontece ao receber RELEASE_COMPLETED
             if worker_uuid in workers_controlled:
                 del workers_controlled[worker_uuid]
-                logging.info(f"[PROTOCOL] Worker {worker_uuid} devolvido para {owner_master_name}")
+                logging.info(f"[PROTOCOL] Worker {worker_uuid} desconectado para devolução a {owner_master_name}")
+
+def process_worker_reconnection(workers_to_wait_for, requester_master_ip):
+    """Aguarda workers se reconectarem e envia RELEASE_COMPLETED."""
+    logging.info(f"[STATE] Aguardando re-registro de {len(workers_to_wait_for)} workers...")
+    reconnected_workers = []
+    
+    # Timeout de 60 segundos para aguardar o retorno dos workers
+    timeout = time.time() + 60 
+    while time.time() < timeout and len(reconnected_workers) < len(workers_to_wait_for):
+        with lock:
+            # Verifica quais workers da lista de espera já estão na lista de controlados
+            for uuid in workers_to_wait_for:
+                if uuid in workers_controlled and uuid not in reconnected_workers:
+                    reconnected_workers.append(uuid)
+                    logging.info(f"[STATE] Worker {uuid} re-registrado com sucesso.")
+        time.sleep(2)
+
+    if not reconnected_workers:
+        logging.warning(f"[STATE] Nenhum worker se reconectou a tempo. Abortando RELEASE_COMPLETED.")
+        return
+
+    # |5.5| Servidor B → Servidor A – Confirmação de Retorno Completo
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(10)
+            s.connect((requester_master_ip, PORT))
+            
+            release_completed_msg = {
+                "SERVER_UUID": HOST,
+                "RESPONSE": "RELEASE_COMPLETED",
+                "WORKERS_UUID": reconnected_workers
+            }
+            send_json(s, release_completed_msg)
+            logging.info(f"[PAYLOAD] {release_completed_msg}")
+            logging.info(f"[PROTOCOL] Enviado RELEASE_COMPLETED para {requester_master_ip}")
+
+    except Exception as e:
+        logging.error(f"[-] Falha ao enviar RELEASE_COMPLETED para {requester_master_ip}: {e}")
+
 
 def manage_worker_connection(conn, addr, uuid):
-    global latency
     try:
         conn.settimeout(30)
         
@@ -411,20 +470,25 @@ def monitor_saturation():
     while True:
         time.sleep(5)
         
+        workers_by_master = {}
         with lock:
             current_load = len(task_queue)
-            borrowed_count = len(borrowed_workers)
-            borrowed_list = list(borrowed_workers.keys()) if borrowed_workers else []
-            owner_master = None
-            if borrowed_workers:
-                owner_master = list(borrowed_workers.values())[0].get("master")
+            # Agrupa workers emprestados pelo seu master de origem
+            for uuid, info in borrowed_workers.items():
+                master_name = info["master"]
+                if master_name not in workers_by_master:
+                    workers_by_master[master_name] = []
+                workers_by_master[master_name].append(uuid)
 
-        logging.info(f"[MONITOR] Carga: {current_load} tasks | Workers emprestados: {borrowed_count}")
+        logging.info(f"[MONITOR] Carga: {current_load} tasks | Workers emprestados: {len(borrowed_workers)}")
 
-        if len(latency_times) > 1 and statistics.mean(latency_times) < THRESHOLD and borrowed_count > 0 and owner_master:
-            logging.info(f"\n[SATURATION] Carga normalizada, Iniciando devolução de {borrowed_count} workers...")
-            initiate_worker_release(owner_master, borrowed_list)
-            print()   #faltando log de confirmação de devolução
+        # Gatilho de devolução: carga < 10 e há workers emprestados
+        if current_load < TASK_THRESHOLD and workers_by_master:
+            # Devolve os workers de um master de cada vez (gradualmente)
+            owner_master, workers_to_return = list(workers_by_master.items())[0]
+            
+            logging.info(f"\n[SATURATION] Carga normalizada. Iniciando devolução de {len(workers_to_return)} workers para {owner_master}...")
+            initiate_worker_release(owner_master, workers_to_return)
                 
         with lock:
             current_time = time.time()
@@ -432,15 +496,12 @@ def monitor_saturation():
 
 
 def initiate_worker_release(master_name, workers_list):
-    """Inicia protocolo COMMAND_RELEASE com master dono"""
-    global release_cmd
+    """|5.1| Inicia protocolo COMMAND_RELEASE com master dono"""
     try:
+        master_ip = None
         with lock:
-            master_ip = None
-            for name, ip in masters_alive.items():
-                if name == master_name:
-                    master_ip = ip
-                    break
+            # Busca o IP do master pelo nome
+            master_ip = masters_alive.get(master_name)
         
         if not master_ip:
             logging.warning(f"[-] Master {master_name} não está vivo para receber devolução")
@@ -450,25 +511,29 @@ def initiate_worker_release(master_name, workers_list):
             s.settimeout(5)
             s.connect((master_ip, PORT))
 
-            global release_cmd
+            # Payload |5.1|
             release_cmd = {
+                "SERVER_UUID": HOST,
                 "TASK": "COMMAND_RELEASE",
-                "MASTER": HOST,
-                "WORKERS": workers_list
+                "WORKERS_UUID": workers_list
             }
             send_json(s, release_cmd)
             logging.info(f"[PAYLOAD] {release_cmd}")
             logging.info(f"[PROTOCOL] Enviado COMMAND_RELEASE para Master {master_name}")
-            logging.info(f"[PROTOCOL] Workers: {workers_list}")
 
+            # Aguarda o ACK antes de prosseguir
             ack = recv_json(s)
+            # Payload |5.2|
             if ack and ack.get("RESPONSE") == "RELEASE_ACK":
                 logging.info(f"[PROTOCOL] {master_name} confirmou RELEASE_ACK")
+                # Inicia o processo de comandar os workers para retornarem
                 threading.Thread(
                     target=process_worker_return,
                     args=(workers_list, master_name, master_ip),
                     daemon=True
                 ).start()
+            else:
+                logging.warning(f"[-] Não recebeu RELEASE_ACK de {master_name}. ACK: {ack}")
     
     except socket.timeout:
         logging.warning(f"[-] Timeout ao enviar COMMAND_RELEASE para {master_name}")
@@ -478,11 +543,12 @@ def initiate_worker_release(master_name, workers_list):
 def monitor_errors():
     while True:
         time.sleep(5)
+        avg_latency = 0
         with lock:
             if len(latency_times) > 1:
                 avg_latency = statistics.mean(latency_times)
         
-        if len(latency_times) > 1 and avg_latency >= THRESHOLD:
+        if avg_latency > 0 and avg_latency >= THRESHOLD:
             ask_for_workers()
 
 def main():
