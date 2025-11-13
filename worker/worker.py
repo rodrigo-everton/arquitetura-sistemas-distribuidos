@@ -11,66 +11,79 @@ logging.basicConfig(
     datefmt='%H:%M:%S'
 )
 
-def conexao(s, worker_id, HOST, PORT, master_origin=None):
+def conexao(s, worker_id, HOST, PORT, master_origin):
+    """Tenta conectar e registrar o worker no master."""
     try:
         s.connect((HOST, PORT))
-        workerAlive = {
+        # Payload de registro/re-registro. MASTER_ORIGIN é crucial para o master validar.
+        worker_alive_msg = {
             "WORKER": "ALIVE",
             "WORKER_UUID": worker_id,
-            "MASTER": HOST,
             "MASTER_ORIGIN": master_origin
         }
-        msg = json.dumps(workerAlive) + "\n"
-        logging.info(f"[PAYLOAD] {workerAlive}")
+        msg = json.dumps(worker_alive_msg) + "\n"
+        logging.info(f"[PAYLOAD] {worker_alive_msg}")
         s.sendall(msg.encode())
     except socket.error as e:
-        logging.error(f"[Connection error] {e}")
+        logging.error(f"[Connection Error] Falha ao conectar em {HOST}:{PORT} - {e}")
+        raise # Propaga o erro para o loop principal tratar a reconexão
 
 if __name__ == '__main__':
     worker_id = str(uuid.uuid4())
-    current_master = '192.168.15.5'
-    master_origin = current_master
+    # O master inicial é a origem do worker
+    master_origin_ip = '192.168.15.4'
+    
+    # Variáveis que controlam a conexão atual
+    current_master_ip = master_origin_ip
+    current_master_port = 5001
     
     while True:
-        HOST = current_master
-        PORT = 5001
-        s = None
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                # Passa master_origin na conexão
-                conexao(s, worker_id, HOST, PORT, master_origin)
-                s.settimeout(30)
-                redirect = False
-                try:
-                    while True:
-                        try:
-                            data = s.recv(1024).decode()
-                        except (socket.error, UnicodeDecodeError) as e:
-                            logging.error(f"[Recv error] {e}")
+                logging.info(f"Tentando conectar ao master {current_master_ip}:{current_master_port}")
+                # Conecta e se registra com o master atual
+                conexao(s, worker_id, current_master_ip, current_master_port, master_origin_ip)
+                s.settimeout(45) # Timeout para receber dados
+                
+                buffer = b""
+                while True: # Loop de comunicação com o master conectado
+                    try:
+                        # Leitura de dados de forma mais robusta
+                        chunk = s.recv(4096)
+                        if not chunk:
+                            logging.warning("Conexão fechada pelo master. Reconectando...")
                             break
-                        if not data:
-                            break
-                        try:
-                            answer = json.loads(data)
-                            logging.info(f"[PAYLOAD] {answer}")
-                        except json.JSONDecodeError as e:
-                            logging.error(f"[JSON error] {e}")
-                            break
-                        #print(answer)
-                        if answer.get("TASK") == "REDIRECT":
-                            try:
-                                target = answer.get("MASTER_REDIRECT")
-                                if target:
-                                    current_master = target
-                                    logging.info(f"[REDIRECT] Redirecionando para: {current_master}")
-                                    redirect = True
-                                    s.close()
-                                    break
-                            except Exception as e:
-                                logging.error(f"[Redirect error] {e}")
                         
-                        elif answer.get("TASK") == "QUERY":
-                            try:
+                        buffer += chunk
+                        # Processa mensagens completas (delimitadas por \n)
+                        while b'\n' in buffer:
+                            message_raw, buffer = buffer.split(b'\n', 1)
+                            if not message_raw:
+                                continue
+
+                            answer = json.loads(message_raw.decode())
+                            logging.info(f"[PAYLOAD] Recebido: {answer}")
+
+                            task = answer.get("TASK")
+
+                            # |5.3| Lógica para ordem de retorno ao master original
+                            if task == "RETURN":
+                                server_return = answer.get("SERVER_RETURN")
+                                if server_return and "ip" in server_return and "port" in server_return:
+                                    new_ip = server_return["ip"]
+                                    new_port = server_return["port"]
+                                    logging.info(f"[PROTOCOL] Recebida ordem de retorno para {new_ip}:{new_port}")
+                                    
+                                    # Atualiza o alvo da próxima conexão
+                                    current_master_ip = new_ip
+                                    current_master_port = new_port
+                                    
+                                    # Força a quebra do loop para reconectar
+                                    raise ConnectionAbortedError("Retornando ao master original")
+                                else:
+                                    logging.error("[PROTOCOL] Payload de retorno inválido.")
+                            
+                            elif task == "QUERY":
                                 output = {
                                     "WORKER_UUID": worker_id,
                                     "CPF": "11111111111",
@@ -78,36 +91,27 @@ if __name__ == '__main__':
                                     "TASK": "QUERY",
                                     "STATUS": "OK"
                                 }
-                                time.sleep(1)
+                                time.sleep(0.2) # Simula trabalho
                                 s.sendall((json.dumps(output) + "\n").encode())
-                                logging.info(f"[PAYLOAD] {output}")
-                            except Exception as e:
-                                logging.error(f"[Query error] {e}")
-                        
-                        else:
-                            try:
-                                output = {
-                                    "WORKER": "EDUARDO",
-                                    "CPF": "11111111111",
-                                    "SALDO": 0,
-                                    "TASK": "QUERY",
-                                    "STATUS": "NOK",
-                                    "ERROR": "User not found"
-                                }
-                                time.sleep(1)
-                                s.sendall((json.dumps(output) + "\n").encode())
-                                logging.info(f"[PAYLOAD] {output}")
-                            except Exception as e:
-                                logging.error(f"[send error on else statement] {e}")
-                
-                except socket.timeout:
-                    logging.warning("Timeout, reconnecting...")
-                    time.sleep(0.5)
-                    pass
-                except Exception:
-                    logging.error("Error, reconnecting...")
-                    time.sleep(0.5)
-                    pass
-        except Exception as e:
-            logging.error(f"Erro: {e}")
-            time.sleep(2)  # Aguarda antes de reconectar
+                                logging.info(f"[PAYLOAD] Enviado: {output}")
+                            
+                            else:
+                                logging.warning(f"Tarefa desconhecida recebida: {task}")
+
+                    except (socket.timeout, ConnectionResetError):
+                        logging.warning("Timeout ou conexão resetada. Reconectando...")
+                        break
+                    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                        logging.error(f"[Recv/JSON Error] {e}")
+                        continue # Tenta ler o próximo fragmento do buffer
+                    except ConnectionAbortedError: # Usado para o fluxo de retorno
+                        break # Sai do loop interno para reconectar ao novo master
+                    except Exception as e:
+                        logging.error(f"Erro inesperado no loop de comunicação: {e}")
+                        break
+        
+        except (socket.error, Exception) as e:
+            logging.error(f"Erro no ciclo de conexão: {e}. Tentando novamente em 5 segundos...")
+        
+        # Pausa antes de tentar uma nova conexão
+        time.sleep(5)
