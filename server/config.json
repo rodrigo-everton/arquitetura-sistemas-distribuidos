@@ -1,0 +1,28 @@
+{
+  "server": {
+    "ip": "127.0.0.1",
+    "port": 5000,
+    "id_number": 1
+  },
+  "peers": [
+    { "id": "SERVER_1", "ip": "10.62.217.199", "port": 5000 },
+    { "id": "SERVER_3", "ip": "10.62.217.16",  "port": 5000 },
+    { "id": "SERVER_4", "ip": "10.62.217.209", "port": 5000 },
+    { "id": "SERVER_5", "ip": "10.62.217.203", "port": 5000 },
+    { "id": "SERVER_B", "ip": "127.0.0.2",     "port": 5000 }
+  ],
+  "timing": {
+    "heartbeat_interval": 2,
+    "heartbeat_timeout": 10,
+    "heartbeat_retries": 2,
+    "heartbeat_retry_delay": 1,
+    "load_balancer_interval": 2
+  },
+  "load_balancing": {
+    "threshold_min_tasks": 10,
+    "threshold_return_tasks": 15,
+    "threshold_window": 30,
+    "idle_worker_threshold": 10,
+    "min_workers_before_sharing": 1
+  }
+}
