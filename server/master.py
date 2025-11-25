@@ -25,7 +25,7 @@ with open(CONFIG_PATH, "r", encoding="utf-8") as f:
 HOST        = CFG["server"]["ip"]
 PORT        = int(CFG["server"]["port"])
 WORKER_PORT = PORT + 1
-SERVER_UUID = HOST
+SERVER_UUID = 'server_3'
 
 PEERS       = CFG.get("peers", [])
 HB_INTERVAL = int(CFG["timing"].get("heartbeat_interval", 3))
@@ -93,7 +93,7 @@ def recv_json(conn, timeout=5):
 
 # ===================== HEARTBEAT =====================
 def hb():
-    return {"TASK": "HEARTBEAT", "SERVER_UUID": SERVER_UUID}
+    return {"SERVER_UUID": SERVER_UUID,"TASK": "HEARTBEAT"}
 
 def hb_ok():
     return {"TASK": "HEARTBEAT", "RESPONSE": "ALIVE", "SERVER_UUID": SERVER_UUID}
