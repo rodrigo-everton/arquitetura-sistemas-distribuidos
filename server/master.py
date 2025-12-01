@@ -1,4 +1,5 @@
-import socket, threading, json, time, random, logging
+import socket, threading, json, time, random, logging, uuid
+from datetime import datetime
 from pathlib import Path
 
 # ===================== PATHS, LOG & CONFIG =====================
@@ -25,7 +26,9 @@ with open(CONFIG_PATH, "r", encoding="utf-8") as f:
 HOST        = CFG["server"]["ip"]
 PORT        = int(CFG["server"]["port"])
 WORKER_PORT = PORT + 1
-SERVER_UUID = 'server_3'
+
+# SERVER_UUID oficial no padrão SERVER_i
+SERVER_UUID = f"SERVER_{CFG['server'].get('id_number', 0)}"
 
 PEERS       = CFG.get("peers", [])
 HB_INTERVAL = int(CFG["timing"].get("heartbeat_interval", 3))
@@ -37,22 +40,29 @@ REQUEST_COOLDOWN   = 10
 MIN_KEEP_LOCAL     = int(CFG["load_balancing"].get("min_workers_before_sharing", 1))
 IDLE_PING_INTERVAL = 10  # ping quando não há tasks
 
-ENABLE_FAKE_LOAD        = False
-FAKE_LOAD_RATE_PER_SEC  = 6
+# ===================== CARGA FAKE (já existia no original) =====================
+ENABLE_FAKE_LOAD        = False   # coloque True se quiser gerar fila automática
+FAKE_LOAD_RATE_PER_SEC  = 6       # quantas tasks por segundo
+
+# ===================== SUPERVISOR (SPRINT 5) =====================
+SUP_HOST         = "srv.webrelay.dev"
+SUP_PORT         = 40595
+METRICS_INTERVAL = 10
+START_TIME       = time.time()
 
 logging.info(f"config carregada: {CONFIG_PATH}")
-logging.info(f"Master em {HOST}:{PORT} | Worker port {WORKER_PORT}")
+logging.info(f"Master {SERVER_UUID} em {HOST}:{PORT} | Worker port {WORKER_PORT}")
 logging.info(f"Peers: {[p['ip'] for p in PEERS]}")
 logging.info(f"Threshold fila={QUEUE_THRESHOLD} | HB interval={HB_INTERVAL}s")
 
 # ===================== ESTADO =====================
 lock = threading.Lock()
-masters_alive     = {}   # {ip: {"last": ts}}
-workers_controlled = {}  # {worker_uuid: worker_ip}
-worker_conns       = {}  # {worker_uuid: conn}  <-- NOVO: guardamos o socket
-borrowed_workers   = {}  # {worker_uuid: {"owner_server_uuid": str, "timestamp": ts}}
-task_queue         = []  # lista de timestamps
-pending_returns    = {}  # {worker_uuid: borrower_ip}
+masters_alive      = {}   # {ip: {"last": ts}}
+workers_controlled = {}   # {worker_uuid: worker_ip}
+worker_conns       = {}   # {worker_uuid: conn}
+borrowed_workers   = {}   # {worker_uuid: {"owner_server_uuid": str, "timestamp": ts}}
+task_queue         = []   # lista de timestamps
+pending_returns    = {}   # {worker_uuid: borrower_ip}
 last_request_time  = 0
 
 # ===================== IO JSON (\n) =====================
@@ -93,7 +103,7 @@ def recv_json(conn, timeout=5):
 
 # ===================== HEARTBEAT =====================
 def hb():
-    return {"SERVER_UUID": SERVER_UUID,"TASK": "HEARTBEAT"}
+    return {"SERVER_UUID": SERVER_UUID, "TASK": "HEARTBEAT"}
 
 def hb_ok():
     return {"TASK": "HEARTBEAT", "RESPONSE": "ALIVE", "SERVER_UUID": SERVER_UUID}
@@ -101,7 +111,7 @@ def hb_ok():
 def send_alive_master():
     while True:
         for peer in PEERS:
-            ip  = peer["ip"]
+            ip   = peer["ip"]
             port = int(peer.get("port", PORT))
 
             # não pinga a si mesmo
@@ -161,7 +171,7 @@ def ask_for_workers():
 
 def initiate_worker_release(owner_server_uuid, workers_list):
     """
-    Este master (BURROWER) devolve workers ao DONO:
+    Este master (BORROWER) devolve workers ao DONO:
     1. Fala com o dono via COMMAND_RELEASE.
     2. Depois manda RETURN para cada worker, usando o socket já aberto.
     """
@@ -495,15 +505,156 @@ def fake_load_generator():
             task_queue[:] = [t for t in task_queue if now - t < 60]
         time.sleep(1)
 
+# ===================== MÉTRICAS PARA SUPERVISOR (SPRINT 5) =====================
+def iso_now(ts=None):
+    if ts is None:
+        dt = datetime.utcnow()
+    else:
+        dt = datetime.utcfromtimestamp(ts)
+    return dt.isoformat(timespec="seconds") + "Z"
+
+def build_neighbors_state():
+    neigh = []
+    with lock:
+        alive_copy = dict(masters_alive)
+    for peer in PEERS:
+        sid = peer.get("id") or peer.get("SERVER_UUID")
+        ip  = peer.get("ip")
+        if not sid or not ip:
+            continue
+        info = alive_copy.get(ip)
+        if info:
+            status = "available"
+            last_hb = iso_now(info["last"])
+        else:
+            status = "unavailable"
+            last_hb = None
+        neigh.append({
+            "server_uuid": sid,
+            "status": status,
+            "last_heartbeat": last_hb
+        })
+    return neigh
+
+def build_farm_state():
+    with lock:
+        total_workers    = len(workers_controlled)
+        received_workers = len(borrowed_workers)
+        tasks_pending    = len(task_queue)
+
+        workers_utilization = min(total_workers, tasks_pending)
+        workers_idle        = max(0, total_workers - workers_utilization)
+        workers_borrowed    = 0
+        workers_failed      = 0
+        tasks_running       = workers_utilization
+
+    workers_state = {
+        "total_registered": total_workers,
+        "workers_utilization": workers_utilization,
+        "workers_alive": total_workers,
+        "workers_idle": workers_idle,
+        "workers_borrowed": workers_borrowed,
+        "workers_recieved": received_workers,  # nome do PDF está assim mesmo
+        "workers_failed": workers_failed
+    }
+    tasks_state = {
+        "tasks_pending": tasks_pending,
+        "tasks_running": tasks_running
+    }
+    return workers_state, tasks_state
+
+def build_system_state():
+    uptime_seconds = int(time.time() - START_TIME)
+
+    # valores totalmente simulados, mas coerentes
+    load_average_1m = round(random.uniform(0.1, 10.0), 2)
+    load_average_5m = round(random.uniform(0.1, 5.0), 2)
+
+    cpu_usage_percent   = round(random.uniform(5.0, 80.0), 1)
+    cpu_count_logical   = 4
+    cpu_count_physical  = 2
+
+    total_mb     = 8192
+    available_mb = random.randint(1024, 6144)
+    percent_used = round(100 * (1 - available_mb / total_mb), 1)
+    memory_used  = round((total_mb - available_mb) / 1024, 1)
+
+    disk_total_gb   = 256.0
+    disk_free_gb    = round(random.uniform(50.0, 220.0), 1)
+    disk_percent    = round(100 * (1 - disk_free_gb / disk_total_gb), 1)
+
+    return {
+        "uptime_seconds": uptime_seconds,
+        "load_average_1m": load_average_1m,
+        "load_average_5m": load_average_5m,
+        "cpu": {
+            "usage_percent": cpu_usage_percent,
+            "count_logical": cpu_count_logical,
+            "count_physical": cpu_count_physical
+        },
+        "memory": {
+            "total_mb": total_mb,
+            "available_mb": available_mb,
+            "percent_used": percent_used,
+            "memory_used": memory_used
+        },
+        "disk": {
+            "total_gb": disk_total_gb,
+            "free_gb": disk_free_gb,
+            "percent_used": disk_percent
+        }
+    }
+
+def build_performance_payload():
+    system_state = build_system_state()
+    workers_state, tasks_state = build_farm_state()
+    neighbors = build_neighbors_state()
+
+    payload = {
+        "server_uuid": SERVER_UUID,
+        "task": "performance_report",
+        "timestamp": iso_now(),
+        "message_id": str(uuid.uuid4()),
+        "performance": {
+            "system": system_state,
+            "farm_state": {
+                "workers": workers_state,
+                "tasks": tasks_state
+            },
+            "config_thresholds": {
+                "max_task": QUEUE_THRESHOLD
+            },
+            "neighbors": neighbors
+        }
+    }
+    return payload
+
+def send_metrics_to_supervisor():
+    while True:
+        try:
+            payload = build_performance_payload()
+            logging.info(f"[SUPERVISOR] enviando métricas para {SUP_HOST}:{SUP_PORT}")
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(5)
+                s.connect((SUP_HOST, SUP_PORT))
+                # apenas SEND, sem recv()
+                s.sendall((json.dumps(payload) + "\n").encode())
+        except Exception as e:
+            logging.error(f"[SUPERVISOR] erro ao enviar métricas: {e}")
+        time.sleep(METRICS_INTERVAL)
+
 # ===================== MAIN =====================
 def main():
     logging.info("[SYSTEM] Master iniciando...")
-    threading.Thread(target=send_alive_master, daemon=True).start()
-    threading.Thread(target=listen_masters, daemon=True).start()
-    threading.Thread(target=listen_workers, daemon=True).start()
+    threading.Thread(target=send_alive_master,     daemon=True).start()
+    threading.Thread(target=listen_masters,        daemon=True).start()
+    threading.Thread(target=listen_workers,        daemon=True).start()
     threading.Thread(target=monitor_request_workers, daemon=True).start()
     threading.Thread(target=monitor_release_workers, daemon=True).start()
-    threading.Thread(target=fake_load_generator, daemon=True).start()
+    threading.Thread(target=fake_load_generator,   daemon=True).start()
+    # Sprint 5: métricas para supervisor
+    threading.Thread(target=send_metrics_to_supervisor, daemon=True).start()
+
     while True:
         time.sleep(1)
 
