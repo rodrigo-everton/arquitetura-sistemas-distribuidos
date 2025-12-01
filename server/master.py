@@ -2,7 +2,7 @@ import socket, threading, json, time, random, logging, uuid
 from datetime import datetime
 from pathlib import Path
 
-# ===================== PATHS, LOG & CONFIG =====================
+#PATHS, LOG & CONFIG
 BASE_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = BASE_DIR / "config.json"
 
@@ -40,11 +40,11 @@ REQUEST_COOLDOWN   = 10
 MIN_KEEP_LOCAL     = int(CFG["load_balancing"].get("min_workers_before_sharing", 1))
 IDLE_PING_INTERVAL = 10  # ping quando não há tasks
 
-# ===================== CARGA FAKE (já existia no original) =====================
+#CARGA FAKE
 ENABLE_FAKE_LOAD        = False   # coloque True se quiser gerar fila automática
 FAKE_LOAD_RATE_PER_SEC  = 6       # quantas tasks por segundo
 
-# ===================== SUPERVISOR (SPRINT 5) =====================
+#SUPERVISOR (SPRINT 5)
 SUP_HOST         = "srv.webrelay.dev"
 SUP_PORT         = 40595
 METRICS_INTERVAL = 10
@@ -55,7 +55,7 @@ logging.info(f"Master {SERVER_UUID} em {HOST}:{PORT} | Worker port {WORKER_PORT}
 logging.info(f"Peers: {[p['ip'] for p in PEERS]}")
 logging.info(f"Threshold fila={QUEUE_THRESHOLD} | HB interval={HB_INTERVAL}s")
 
-# ===================== ESTADO =====================
+#ESTADO
 lock = threading.Lock()
 masters_alive      = {}   # {ip: {"last": ts}}
 workers_controlled = {}   # {worker_uuid: worker_ip}
@@ -65,7 +65,7 @@ task_queue         = []   # lista de timestamps
 pending_returns    = {}   # {worker_uuid: borrower_ip}
 last_request_time  = 0
 
-# ===================== IO JSON (\n) =====================
+#IO JSON (\n)
 def send_json(conn, obj):
     try:
         conn.sendall((json.dumps(obj) + "\n").encode())
@@ -101,7 +101,7 @@ def recv_json(conn, timeout=5):
     except Exception:
         return None
 
-# ===================== HEARTBEAT =====================
+#HEARTBEAT
 def hb():
     return {"SERVER_UUID": SERVER_UUID, "TASK": "HEARTBEAT"}
 
@@ -133,7 +133,7 @@ def send_alive_master():
                     masters_alive.pop(ip, None)
         time.sleep(HB_INTERVAL)
 
-# ===================== PROTOCOLO MASTER/MASTER =====================
+#PROTOCOLO MASTER/MASTER
 def build_worker_request(needed):
     return {
         "TASK": "WORKER_REQUEST",
@@ -235,7 +235,7 @@ def send_release_completed(borrower_ip, workers_list):
     except Exception as e:
         logging.error(f"[RELEASE_COMPLETED] erro: {e}")
 
-# ===================== HANDLER MASTER =====================
+#HANDLER MASTER
 def receive_master(c, addr):
     try:
         data = recv_json(c, 5)
@@ -321,7 +321,7 @@ def receive_master(c, addr):
         except:
             pass
 
-# ===================== WORKERS =====================
+#WORKERS
 def receive_alive_worker(conn, addr):
     try:
         data = recv_json(conn, 5)
@@ -430,7 +430,7 @@ def manage_worker_connection(conn, addr, wid):
             borrowed_workers.pop(wid, None)
             worker_conns.pop(wid, None)
 
-# ===================== LISTENERS =====================
+#LISTENERS
 def listen_masters():
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -505,7 +505,7 @@ def fake_load_generator():
             task_queue[:] = [t for t in task_queue if now - t < 60]
         time.sleep(1)
 
-# ===================== MÉTRICAS PARA SUPERVISOR (SPRINT 5) =====================
+#MÉTRICAS PARA SUPERVISOR (SPRINT 5)
 def iso_now(ts=None):
     if ts is None:
         dt = datetime.utcnow()
@@ -566,7 +566,7 @@ def build_farm_state():
 def build_system_state():
     uptime_seconds = int(time.time() - START_TIME)
 
-    # valores totalmente simulados, mas coerentes
+    # valores simulados
     load_average_1m = round(random.uniform(0.1, 10.0), 2)
     load_average_5m = round(random.uniform(0.1, 5.0), 2)
 
