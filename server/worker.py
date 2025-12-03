@@ -24,8 +24,8 @@ def load_master_from_config(path: Path):
         worker_port = int(cfg["server"]["port"]) + 1
         return ip, worker_port
     except Exception as e:
-        logger.warning(f"Não consegui ler {path} ({e}). Usando 127.0.0.1:5001")
-        return "127.0.0.1", 5001
+        logger.warning(f"Não consegui ler {path} ({e}). Usando 127.0.0.1:5000")
+        return "127.0.0.1", 5000
 
 # ===================== IO JSON (\n) =====================
 def send_json(conn: socket.socket, obj: dict):
