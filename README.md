@@ -1,3 +1,14 @@
+<<<<<<< HEAD
+# Projeto: P2P com Balanceamento de Carga Dinâmico
+
+## Estrutura do Sistema
+
+### 1. Nó Master
+- [ ]  master e se conectar com master
+- [ ] 
+
+### Porta 
+=======
 SERVIDOR - WORKER
 | 1 | Worker → Servidor | `{"WORKER": "ALIVE"}` | Apresentar-se e pedir tarefa. |
 | 2 | Servidor → Worker | `{"TASK": "QUERY", "USER": "..."}` | Enviar uma tarefa de consulta. |
@@ -16,3 +27,4 @@ SERVIDOR - SERVIDOR
 | 4.2 | Servidor B → Servidor A | `{"TASK": "WORKER_RESPONSE", "STATUS": "NACK",  "WORKERS": [] }` | Enviar uma resposta negativa de pedido de trabalhadores emprestado. |
 
 | 4.3 | Worker (Emprestado) → Servidor A | `{"WORKER": "ALIVE", "WORKER_UUID":"..."}` | Worker emprestado envia uma conexão para o servidor saturado. |
+>>>>>>> a2c2e2e6747b5056be054a56f261249b74787d09

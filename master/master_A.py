@@ -1,0 +1,73 @@
+import socket
+import threading
+import uuid
+import json
+import time
+
+SERVER_B_HOST = '127.0.0.1'
+SERVER_B_PORT = 9000
+HEARTBEAT_INTERVAL = 5  # segundos
+TIMEOUT = 15  # tempo para considerar servidor offline
+
+class ServerA:
+    def __init__(self):
+        self.server_id = str(uuid.uuid4())
+        self.servers_alive = {}  # {server_id: last_heartbeat_time}
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock.connect((SERVER_B_HOST, SERVER_B_PORT))
+        print(f"[Server A] SERVER_ID: {self.server_id},  Conectado ao Server B em {SERVER_B_HOST}:{SERVER_B_PORT}")
+
+    def send_heartbeat(self):
+        while True:
+            msg = json.dumps({
+                "SERVER_ID": self.server_id,
+                "TASK": "HEARTBEAT"
+            }).encode()
+            try:
+                self.sock.sendall(msg)
+                # print("[Server A] Heartbeat enviado")
+            except Exception as e:
+                print(f"[Server A] Erro ao enviar heartbeat: {e}")
+                break
+            time.sleep(HEARTBEAT_INTERVAL)
+
+    def listen_responses(self):
+        while True:
+            try:
+                data = self.sock.recv(1024)
+                if not data:
+                    print("[Server A] Conexão encerrada pelo Server B")
+                    break
+                msg = json.loads(data.decode())
+                if msg.get("TASK") == "HEARTBEAT" and msg.get("RESPONSE") == "ALIVE":
+                    server_id = msg.get("SERVER_ID")
+                    self.servers_alive[server_id] = time.time()
+                    print(f"[Server A] {self.server_id} Recebeu heartbeat ALIVE de {server_id}")
+            except Exception as e:
+                print(f"[Server A] Erro ao receber dados: {e}")
+                break
+
+    def check_timeouts(self):
+        while True:
+            now = time.time()
+            to_remove = []
+            for server_id, last_time in self.servers_alive.items():
+                if now - last_time > TIMEOUT:
+                    print(f"[Server A] Servidor {server_id} considerado offline (timeout)")
+                    to_remove.append(server_id)
+            for server_id in to_remove:
+                del self.servers_alive[server_id]
+            time.sleep(HEARTBEAT_INTERVAL)
+
+    def start(self):
+        threading.Thread(target=self.send_heartbeat, daemon=True).start()
+        threading.Thread(target=self.listen_responses, daemon=True).start()
+        threading.Thread(target=self.check_timeouts, daemon=True).start()
+
+        while True:
+            time.sleep(1)  # Mantém o programa rodando
+
+
+if __name__ == "__main__":
+    server_a = ServerA()
+    server_a.start()
