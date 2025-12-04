@@ -1,7 +1,7 @@
 import argparse, json, logging, socket, time, uuid
 from pathlib import Path
 
-# ===================== PATHS & LOG =====================
+#PATHS & LOG
 BASE_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = BASE_DIR / "config.json"
 
@@ -15,7 +15,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("sd.worker")
 
-# ===================== CONFIG =====================
+#CONFIG
 def load_master_from_config(path: Path):
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -24,10 +24,10 @@ def load_master_from_config(path: Path):
         worker_port = int(cfg["server"]["port"]) + 1
         return ip, worker_port
     except Exception as e:
-        logger.warning(f"Não consegui ler {path} ({e}). Usando 127.0.0.1:5000")
-        return "127.0.0.1", 5000
+        logger.warning(f"Não consegui ler {path} ({e}). Usando 10.62.217.212:5000")
+        return "10.62.217.212", 5000
 
-# ===================== IO JSON (\n) =====================
+#IO JSON (\n)
 def send_json(conn: socket.socket, obj: dict):
     try:
         conn.sendall((json.dumps(obj) + "\n").encode())
@@ -59,7 +59,7 @@ def recv_json(conn: socket.socket, timeout: float = 30.0):
     except Exception:
         return None
 
-# ===================== WORKER LOOP =====================
+#WORKER LOOP
 def connect_and_run(current_master_ip: str, worker_port: int, worker_uuid: str, master_origin: str | None):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(10)
@@ -123,7 +123,6 @@ def connect_and_run(current_master_ip: str, worker_port: int, worker_uuid: str, 
 
     return ("DISCONNECT", None, None, None)
 
-# ===================== MAIN =====================
 if __name__ == "__main__":
     import argparse
     p = argparse.ArgumentParser(description="Worker simples do SD")

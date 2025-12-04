@@ -11,7 +11,7 @@ import platform
 from datetime import datetime
 from pathlib import Path
 
-# ===================== PATHS, LOG & CONFIG =====================
+#PATHS, LOG & CONFIG
 BASE_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = BASE_DIR / "config.json"
 
@@ -51,9 +51,9 @@ IDLE_PING_INTERVAL = 10
 ENABLE_FAKE_LOAD       = False
 FAKE_LOAD_RATE_PER_SEC = 2
 
-# ===================== SUPERVISOR (SPRINT 5) =====================
-SUP_HOST         = "napyfixe-xalqpbxr.srv.webrelay.dev"
-SUP_PORT         = 37205
+#SUPERVISOR (SPRINT 5)
+SUP_HOST         = "10.62.217.32"
+SUP_PORT         = 8000
 METRICS_INTERVAL = 10
 START_TIME       = time.time()
 
@@ -61,7 +61,7 @@ logging.info(f"Master {SERVER_UUID} em {HOST}:{PORT} | Worker port {WORKER_PORT}
 logging.info(f"Peers: {[p['ip'] for p in PEERS]}")
 logging.info(f"Threshold fila={QUEUE_THRESHOLD} | HB interval={HB_INTERVAL}s")
 
-# ===================== ESTADO =====================
+#ESTADO
 lock = threading.Lock()
 masters_alive      = {}   # {ip: {"last": ts}}
 workers_controlled = {}   # {worker_uuid: worker_ip}
@@ -71,7 +71,7 @@ pending_returns    = {}   # {worker_uuid: borrower_ip}
 task_queue         = []   # lista de timestamps
 last_request_time  = 0
 
-# ===================== IO JSON =====================
+#IO JSON
 def send_json(conn, obj):
     try:
         conn.sendall((json.dumps(obj) + "\n").encode())
@@ -107,7 +107,7 @@ def recv_json(conn, timeout=5):
     except Exception:
         return None
 
-# ===================== HEARTBEAT =====================
+#HEARTBEAT
 def hb():
     return {"SERVER_UUID": SERVER_UUID, "TASK": "HEARTBEAT"}
 
@@ -138,7 +138,7 @@ def send_alive_master():
                     masters_alive.pop(ip, None)
         time.sleep(HB_INTERVAL)
 
-# ===================== PROTOCOLO MASTER/MASTER =====================
+#PROTOCOLO MASTER/MASTER
 def build_worker_request(needed):
     return {
         "TASK": "WORKER_REQUEST",
@@ -179,7 +179,7 @@ def initiate_worker_release(owner_server_uuid, workers_list):
     1. Fala com o dono via COMMAND_RELEASE.
     2. Depois manda RETURN para cada worker.
     """
-    owner_ip = owner_server_uuid  # no seu cenário, o id do dono é o IP do servidor
+    owner_ip = owner_server_uuid  #o id do dono é o IP do servidor
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.settimeout(5)
@@ -318,7 +318,7 @@ def receive_master(c, addr):
         except Exception:
             pass
 
-# ===================== WORKERS =====================
+#WORKERS
 def receive_alive_worker(conn, addr):
     try:
         data = recv_json(conn, 5)
@@ -414,7 +414,7 @@ def manage_worker_connection(conn, addr, wid):
             borrowed_workers.pop(wid, None)
             worker_conns.pop(wid, None)
 
-# ===================== LISTENERS =====================
+#LISTENERS
 def listen_masters():
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -449,7 +449,7 @@ def listen_workers():
     except Exception as e:
         logging.error(f"[listen_workers] {e}")
 
-# ===================== MONITORES & CARGA =====================
+#MONITORES & CARGA
 def monitor_request_workers():
     global last_request_time
     while True:
@@ -488,7 +488,7 @@ def fake_load_generator():
             task_queue[:] = [t for t in task_queue if now - t < 60]
         time.sleep(1)
 
-# ===================== MÉTRICAS PARA SUPERVISOR =====================
+#MÉTRICAS PARA SUPERVISOR
 def iso_now(ts=None):
     if ts is None:
         dt = datetime.utcnow()
@@ -637,7 +637,6 @@ def send_metrics_to_supervisor():
             logging.error(f"[SUPERVISOR] erro ao enviar métricas: {e}")
         time.sleep(METRICS_INTERVAL)
 
-# ===================== MAIN =====================
 def main():
     logging.info("[SYSTEM] Master iniciando...")
     threading.Thread(target=send_alive_master,        daemon=True).start()
